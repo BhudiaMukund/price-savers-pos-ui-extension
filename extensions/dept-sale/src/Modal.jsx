@@ -9,6 +9,7 @@ import {
   keyImageUrl,
 } from "./departments.js";
 import { initialState, press, formatCents } from "./keypad.js";
+import { probeAll } from "./imageProbe.js";
 
 export default async () => {
   render(<DeptSale />, document.body);
@@ -27,7 +28,11 @@ const NUM_ROWS = [
   ["C"],
 ];
 
-const PREF_KEY = "keyStyle"; // 'pictures' | 'text', remembered on this device
+const ALL_CODES = DEPARTMENT_ROWS.flat().map((d) => d.code);
+
+// Result of the last picture check, kept while POS keeps the extension loaded
+// so reopening Dept Sale doesn't flash text keys before switching to pictures.
+let lastFailed = null;
 
 function isOnline(state) {
   // If POS can't tell us, assume online.
@@ -44,7 +49,8 @@ function DeptSale() {
   const [online, setOnline] = useState(
     isOnline(shopify.connectivity?.current?.value),
   );
-  const [keyStyle, setKeyStyle] = useState("pictures");
+  // Department codes whose picture couldn't be loaded; those keys show as text.
+  const [failed, setFailed] = useState(lastFailed ?? new Set());
   const busy = useRef(false);
 
   useEffect(() => {
@@ -63,25 +69,32 @@ function DeptSale() {
       .isTablet()
       .then((tablet) => setIsTablet(Boolean(tablet)))
       .catch(() => {});
-    Promise.resolve(shopify.storage?.get?.(PREF_KEY))
-      .then((saved) => {
-        if (saved === "text" || saved === "pictures") setKeyStyle(saved);
-      })
-      .catch(() => {});
     return () => unsubs.forEach((u) => u && u());
   }, []);
+
+  // Check the pictures on open and every time the internet comes back.
+  useEffect(() => {
+    if (!KEY_IMAGES.baseUrl || !online) return;
+    let cancelled = false;
+    probeAll(ALL_CODES, keyImageUrl)
+      .then((bad) => {
+        if (cancelled) return;
+        lastFailed = bad;
+        setFailed(bad);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [online]);
 
   const L = isTablet ? LAYOUT.tablet : LAYOUT.phone;
   const clearWidth = `${parseInt(L.numKey, 10) * 3 + 16}px`;
   const picturesAvailable = Boolean(KEY_IMAGES.baseUrl);
-  // Pictures need the internet to load, so fall back to text keys when offline.
-  const showPictures = picturesAvailable && online && keyStyle === "pictures";
-
-  function toggleKeyStyle() {
-    const next = keyStyle === "pictures" ? "text" : "pictures";
-    setKeyStyle(next);
-    Promise.resolve(shopify.storage?.set?.(PREF_KEY, next)).catch(() => {});
-  }
+  // A key shows its picture only if pictures are set up, we're online, and
+  // that key's image loaded in the last check. Otherwise it's a text button.
+  const showPicture = (code) =>
+    picturesAvailable && online && !failed.has(code);
 
   async function onKey(key) {
     if (busy.current) return; // ignore taps while a line is being added
@@ -198,7 +211,7 @@ function DeptSale() {
     <s-stack direction="block" gap={L.gap}>
       {DEPARTMENT_ROWS.map((row) => (
         <s-stack key={row[0].code} direction="inline" gap={L.gap}>
-          {row.map(showPictures ? pictureKey : textKey)}
+          {row.map((d) => (showPicture(d.code) ? pictureKey(d) : textKey(d)))}
         </s-stack>
       ))}
     </s-stack>
@@ -232,22 +245,8 @@ function DeptSale() {
               </s-heading>
               <s-text color="subdued">Cart {cartTotal}</s-text>
             </s-stack>
-            <s-stack
-              direction="inline"
-              justifyContent="space-between"
-              alignItems="center"
-            >
-              <s-text color="subdued">{styleNote ?? lastLine}</s-text>
-              {picturesAvailable && (
-                <s-button
-                  variant="secondary"
-                  onClick={toggleKeyStyle}
-                  disabled={!online}
-                >
-                  {keyStyle === "pictures" ? "Text keys" : "Picture keys"}
-                </s-button>
-              )}
-            </s-stack>
+            <s-text color="subdued">{lastLine}</s-text>
+            {styleNote && <s-text tone="caution">{styleNote}</s-text>}
           </s-stack>
 
           {/* Tablet: side by side. Phone: number pad on top, departments below. */}
