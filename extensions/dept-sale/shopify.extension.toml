@@ -1,0 +1,22 @@
+api_version = "2026-07"
+
+[[extensions]]
+type = "ui_extension"
+# Change the merchant-facing name of the extension in locales/en.default.json
+name = "dept-sale"
+uid = "564ab672-8966-6067-1d82-2291e48acab698d708ea"
+handle = "dept-sale"
+description = "A preact POS UI extension"
+
+[extensions.supported_features]
+runs_offline = true
+
+# module: file that contains your extension’s source code
+# target: location where your extension appears in POS
+[[extensions.targeting]]
+module = "./src/Tile.jsx"
+target = "pos.home.tile.render"
+
+[[extensions.targeting]]
+module = "./src/Modal.jsx"
+target = "pos.home.modal.render"
