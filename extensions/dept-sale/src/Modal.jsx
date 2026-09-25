@@ -217,42 +217,46 @@ function DeptSale() {
         Undo last
       </s-button>
 
-      <s-stack direction="block" gap="base" padding={L.padding}>
-        {/* Display, like the till's screen */}
-        <s-stack direction="block" gap="small-400">
-          <s-stack
-            direction="inline"
-            justifyContent="space-between"
-            alignItems="center"
-          >
-            <s-heading>
-              {qtyShown}
-              {priceShown}
-            </s-heading>
-            <s-text color="subdued">Cart {cartTotal}</s-text>
-          </s-stack>
-          <s-text color="subdued">{lastLine}</s-text>
-        </s-stack>
-
-        {/* Tablet: side by side. Phone: number pad on top, departments below. */}
-        <s-stack direction={isTablet ? "inline" : "block"} gap="large">
-          {numberPad}
-          {departmentGrid}
-        </s-stack>
-
-        {picturesAvailable && (
-          <s-stack direction="inline" gap="base" alignItems="center">
-            <s-button
-              variant="secondary"
-              onClick={toggleKeyStyle}
-              disabled={!online}
+      <s-scroll-box>
+        <s-stack direction="block" gap="base" padding={L.padding}>
+          {/* Display, like the till's screen */}
+          <s-stack direction="block" gap="small-400">
+            <s-stack
+              direction="inline"
+              justifyContent="space-between"
+              alignItems="center"
             >
-              {keyStyle === "pictures" ? "Use text keys" : "Use picture keys"}
-            </s-button>
-            {styleNote && <s-text tone="caution">{styleNote}</s-text>}
+              <s-heading>
+                {qtyShown}
+                {priceShown}
+              </s-heading>
+              <s-text color="subdued">Cart {cartTotal}</s-text>
+            </s-stack>
+            <s-stack
+              direction="inline"
+              justifyContent="space-between"
+              alignItems="center"
+            >
+              <s-text color="subdued">{styleNote ?? lastLine}</s-text>
+              {picturesAvailable && (
+                <s-button
+                  variant="secondary"
+                  onClick={toggleKeyStyle}
+                  disabled={!online}
+                >
+                  {keyStyle === "pictures" ? "Text keys" : "Picture keys"}
+                </s-button>
+              )}
+            </s-stack>
           </s-stack>
-        )}
-      </s-stack>
+
+          {/* Tablet: side by side. Phone: number pad on top, departments below. */}
+          <s-stack direction={isTablet ? "inline" : "block"} gap="large">
+            {numberPad}
+            {departmentGrid}
+          </s-stack>
+        </s-stack>
+      </s-scroll-box>
     </s-page>
   );
 }

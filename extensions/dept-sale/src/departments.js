@@ -4,7 +4,7 @@
 // code     -> saved on the order as a hidden line-item property (_ps_dept),
 //             so department sales can be pulled from orders/exports later.
 // label    -> text on the key on a tablet.
-// short    -> text on the key on a phone (keys are narrow, keep to 4 letters or fewer).
+// short    -> text on the key on a phone (keys are narrow, long words wrap onto 2 lines, which is fine).
 // title    -> line-item title shown in the cart and on the receipt.
 // taxable  -> set to false for any GST-free department.
 //
@@ -22,7 +22,7 @@ export const DEPARTMENT_ROWS = [
     {
       code: "HARDWARE",
       label: "Hardware",
-      short: "Hdwr",
+      short: "Hardw",
       title: "Hardware",
       taxable: true,
     },
@@ -37,7 +37,7 @@ export const DEPARTMENT_ROWS = [
     {
       code: "TRAVELS",
       label: "Travels",
-      short: "Trvl",
+      short: "Travel",
       title: "Travel",
       taxable: true,
     },
@@ -67,7 +67,7 @@ export const DEPARTMENT_ROWS = [
     {
       code: "DRESS_UPS",
       label: "Dress-ups",
-      short: "Dres",
+      short: "Dress",
       title: "Dress-ups",
       taxable: true,
     },
@@ -97,21 +97,21 @@ export const DEPARTMENT_ROWS = [
     {
       code: "NOVELTY",
       label: "Novelty",
-      short: "Novl",
+      short: "Novel",
       title: "Novelty",
       taxable: true,
     },
     {
       code: "SEASONAL",
       label: "Seasonal",
-      short: "Seas",
+      short: "Season",
       title: "Seasonal",
       taxable: true,
     },
     {
       code: "HALLOWEEN",
       label: "Halloween",
-      short: "Hlwn",
+      short: "Hallow",
       title: "Halloween",
       taxable: true,
     },
@@ -120,14 +120,14 @@ export const DEPARTMENT_ROWS = [
     {
       code: "KITCHEN",
       label: "Kitchen",
-      short: "Kitc",
+      short: "Kitch",
       title: "Kitchen",
       taxable: true,
     },
     {
       code: "STATIONERY",
       label: "Stationery",
-      short: "Stat",
+      short: "Statio",
       title: "Stationery",
       taxable: true,
     },
@@ -135,14 +135,14 @@ export const DEPARTMENT_ROWS = [
     {
       code: "SUMMER",
       label: "Summer",
-      short: "Sumr",
+      short: "Summer",
       title: "Summer",
       taxable: true,
     },
     {
       code: "EASTER",
       label: "Easter",
-      short: "Estr",
+      short: "Easter",
       title: "Easter",
       taxable: true,
     },
@@ -158,7 +158,7 @@ export const DEPARTMENT_ROWS = [
     {
       code: "PARTY",
       label: "Party",
-      short: "Prty",
+      short: "Party",
       title: "Party",
       taxable: true,
     },
@@ -172,7 +172,7 @@ export const DEPARTMENT_ROWS = [
     {
       code: "WINTER",
       label: "Winter",
-      short: "Wntr",
+      short: "Winter",
       title: "Winter",
       taxable: true,
     },
