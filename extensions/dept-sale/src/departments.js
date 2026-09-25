@@ -198,15 +198,43 @@ export const MAX_QTY = 99;
 // Phone:  number pad on top, department grid underneath, 5 across.
 // If the 5th department column wraps onto a new line on a phone, lower
 // phone.deptKey by a couple of px.
+// deptKeyH is the height of the picture keys (images are 4:3).
 export const LAYOUT = {
-  tablet: { numKey: "88px", deptKey: "120px", gap: "small", padding: "base" },
+  tablet: {
+    numKey: "88px",
+    deptKey: "120px",
+    deptKeyH: "90px",
+    gap: "small",
+    padding: "base",
+  },
   phone: {
     numKey: "88px",
     deptKey: "68px",
+    deptKeyH: "51px",
     gap: "small-400",
     padding: "small",
   },
 };
+
+// Picture keys (Casio colours). Upload the files from key-images/ to
+// Shopify admin -> Content -> Files, copy the URL of any one of them and
+// paste everything up to and including "/files/" here.
+// Leave baseUrl empty ('') to always use the plain text keys.
+// Bump `version` whenever you re-upload changed images, so tills don't
+// keep showing the old cached ones.
+export const KEY_IMAGES = {
+  baseUrl:
+    "https://cdn.shopify.com/s/files/1/0705/9547/7672/files/",
+  version: "1",
+};
+
+export function keyImageUrl(code) {
+  if (!KEY_IMAGES.baseUrl) return "";
+  const base = KEY_IMAGES.baseUrl.endsWith("/")
+    ? KEY_IMAGES.baseUrl
+    : `${KEY_IMAGES.baseUrl}/`;
+  return `${base}ps-key-${code.toLowerCase()}.png?v=${KEY_IMAGES.version}`;
+}
 
 // Hidden line-item property key. The leading underscore hides it from the
 // cart, the customer display and receipts; it's still on the order in admin.

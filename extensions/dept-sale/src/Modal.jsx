@@ -1,7 +1,13 @@
 import { render } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 
-import { DEPARTMENT_ROWS, LAYOUT, DEPT_PROPERTY_KEY } from "./departments.js";
+import {
+  DEPARTMENT_ROWS,
+  LAYOUT,
+  DEPT_PROPERTY_KEY,
+  KEY_IMAGES,
+  keyImageUrl,
+} from "./departments.js";
 import { initialState, press, formatCents } from "./keypad.js";
 
 export default async () => {
@@ -21,6 +27,13 @@ const NUM_ROWS = [
   ["C"],
 ];
 
+const PREF_KEY = "keyStyle"; // 'pictures' | 'text', remembered on this device
+
+function isOnline(state) {
+  // If POS can't tell us, assume online.
+  return state?.internetConnected !== "Disconnected";
+}
+
 function DeptSale() {
   const [pad, setPad] = useState(initialState);
   const [added, setAdded] = useState([]); // lines added in this session, newest first
@@ -28,22 +41,47 @@ function DeptSale() {
     readTotal(shopify.cart.current.value),
   );
   const [isTablet, setIsTablet] = useState(false); // start with the phone layout; it fits everywhere
+  const [online, setOnline] = useState(
+    isOnline(shopify.connectivity?.current?.value),
+  );
+  const [keyStyle, setKeyStyle] = useState("pictures");
   const busy = useRef(false);
 
   useEffect(() => {
-    const unsubscribe = shopify.cart.current.subscribe((cart) => {
-      setCartTotal(readTotal(cart));
-    });
+    const unsubs = [];
+    unsubs.push(
+      shopify.cart.current.subscribe((cart) => setCartTotal(readTotal(cart))),
+    );
+    if (shopify.connectivity?.current?.subscribe) {
+      unsubs.push(
+        shopify.connectivity.current.subscribe((state) =>
+          setOnline(isOnline(state)),
+        ),
+      );
+    }
     shopify.device
       .isTablet()
       .then((tablet) => setIsTablet(Boolean(tablet)))
       .catch(() => {});
-    return unsubscribe;
+    Promise.resolve(shopify.storage?.get?.(PREF_KEY))
+      .then((saved) => {
+        if (saved === "text" || saved === "pictures") setKeyStyle(saved);
+      })
+      .catch(() => {});
+    return () => unsubs.forEach((u) => u && u());
   }, []);
 
   const L = isTablet ? LAYOUT.tablet : LAYOUT.phone;
-  const numKeyPx = parseInt(L.numKey, 10);
-  const clearWidth = `${numKeyPx * 3 + 16}px`;
+  const clearWidth = `${parseInt(L.numKey, 10) * 3 + 16}px`;
+  const picturesAvailable = Boolean(KEY_IMAGES.baseUrl);
+  // Pictures need the internet to load, so fall back to text keys when offline.
+  const showPictures = picturesAvailable && online && keyStyle === "pictures";
+
+  function toggleKeyStyle() {
+    const next = keyStyle === "pictures" ? "text" : "pictures";
+    setKeyStyle(next);
+    Promise.resolve(shopify.storage?.set?.(PREF_KEY, next)).catch(() => {});
+  }
 
   async function onKey(key) {
     if (busy.current) return; // ignore taps while a line is being added
@@ -111,6 +149,9 @@ function DeptSale() {
 
   const priceShown = `$${formatCents(pad.entry === "" ? 0 : parseInt(pad.entry, 10))}`;
   const qtyShown = pad.qty > 1 ? `${pad.qty} × ` : "";
+  const lastLine = added[0]
+    ? `Added: ${added[0].qty} × $${formatCents(added[0].cents)} ${added[0].title}`
+    : "Type a price, then a department";
 
   const numberPad = (
     <s-stack direction="block" gap={L.gap}>
@@ -132,24 +173,39 @@ function DeptSale() {
     </s-stack>
   );
 
+  const pictureKey = (d) => (
+    <s-clickable key={d.code} onClick={() => onKey(`DEPT:${d.code}`)}>
+      <s-box inlineSize={L.deptKey} blockSize={L.deptKeyH}>
+        <s-image
+          src={keyImageUrl(d.code)}
+          alt={isTablet ? d.label : d.short}
+          objectFit="contain"
+          inlineSize="fill"
+        />
+      </s-box>
+    </s-clickable>
+  );
+
+  const textKey = (d) => (
+    <s-box key={d.code} inlineSize={L.deptKey}>
+      <s-button variant="primary" onClick={() => onKey(`DEPT:${d.code}`)}>
+        {isTablet ? d.label : d.short}
+      </s-button>
+    </s-box>
+  );
+
   const departmentGrid = (
     <s-stack direction="block" gap={L.gap}>
       {DEPARTMENT_ROWS.map((row) => (
         <s-stack key={row[0].code} direction="inline" gap={L.gap}>
-          {row.map((d) => (
-            <s-box key={d.code} inlineSize={L.deptKey}>
-              <s-button
-                variant="primary"
-                onClick={() => onKey(`DEPT:${d.code}`)}
-              >
-                {isTablet ? d.label : d.short}
-              </s-button>
-            </s-box>
-          ))}
+          {row.map(showPictures ? pictureKey : textKey)}
         </s-stack>
       ))}
     </s-stack>
   );
+
+  let styleNote = null;
+  if (picturesAvailable && !online) styleNote = "Offline: using text keys";
 
   return (
     <s-page heading="Dept Sale">
@@ -163,16 +219,19 @@ function DeptSale() {
 
       <s-stack direction="block" gap="base" padding={L.padding}>
         {/* Display, like the till's screen */}
-        <s-stack
-          direction="inline"
-          justifyContent="space-between"
-          alignItems="center"
-        >
-          <s-heading>
-            {qtyShown}
-            {priceShown}
-          </s-heading>
-          <s-text color="subdued">Cart {cartTotal}</s-text>
+        <s-stack direction="block" gap="small-400">
+          <s-stack
+            direction="inline"
+            justifyContent="space-between"
+            alignItems="center"
+          >
+            <s-heading>
+              {qtyShown}
+              {priceShown}
+            </s-heading>
+            <s-text color="subdued">Cart {cartTotal}</s-text>
+          </s-stack>
+          <s-text color="subdued">{lastLine}</s-text>
         </s-stack>
 
         {/* Tablet: side by side. Phone: number pad on top, departments below. */}
@@ -181,20 +240,17 @@ function DeptSale() {
           {departmentGrid}
         </s-stack>
 
-        {/* What's been rung up from this screen */}
-        {added.length > 0 && (
-          <s-section heading="Added from this screen">
-            <s-stack direction="block" gap="small-200">
-              {added.slice(0, 5).map((l, i) => (
-                <s-text
-                  key={`${l.uuid}-${i}`}
-                  color={i === 0 ? "base" : "subdued"}
-                >
-                  {l.qty} × ${formatCents(l.cents)} {l.title}
-                </s-text>
-              ))}
-            </s-stack>
-          </s-section>
+        {picturesAvailable && (
+          <s-stack direction="inline" gap="base" alignItems="center">
+            <s-button
+              variant="secondary"
+              onClick={toggleKeyStyle}
+              disabled={!online}
+            >
+              {keyStyle === "pictures" ? "Use text keys" : "Use picture keys"}
+            </s-button>
+            {styleNote && <s-text tone="caution">{styleNote}</s-text>}
+          </s-stack>
         )}
       </s-stack>
     </s-page>
