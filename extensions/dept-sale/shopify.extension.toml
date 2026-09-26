@@ -3,7 +3,7 @@ api_version = "2026-07"
 [[extensions]]
 type = "ui_extension"
 # Change the merchant-facing name of the extension in locales/en.default.json
-name = "dept-sale"
+name = "Dept Sale"
 uid = "564ab672-8966-6067-1d82-2291e48acab698d708ea"
 handle = "dept-sale"
 description = "A preact POS UI extension"
