@@ -1,5 +1,9 @@
 # Dept Sale
 
+![Shopify POS UI extension](https://img.shields.io/badge/Shopify-POS_UI_extension-95BF47?logo=shopify&logoColor=white)
+![Preact](https://img.shields.io/badge/Preact-673AB8?logo=preact&logoColor=white)
+![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)
+
 A Shopify POS extension that gives the till a Casio-style department keypad.
 Type a price, press a department, and the item goes into the cart.
 
@@ -14,7 +18,9 @@ keyboard and hitting Save. That's fine once. With a queue out the door it isn't.
 Dept Sale puts the Casio's 25 department keys back, in the same positions, as a
 tile on the POS home screen.
 
-<!-- Add a screenshot here, e.g. docs/tablet.png -->
+<p align="center">
+  <img src="docs/demo.gif" alt="Dept Sale on a POS tablet: typing 450 and pressing Party adds a $4.50 Party line to the cart" width="820">
+</p>
 
 ## How staff use it
 
@@ -40,12 +46,18 @@ next price straight away.
 
 - **Same layout as the Casio.** 25 department keys in a 5 × 5 grid, with the
   number pad beside them on a tablet or above them on a phone.
-- **Four key styles.** Classic Casio, Soft pastel, Dark with colour bar, and
-  Bold colour. Pick one from the ⚙ button. Each till remembers its own choice.
+- **Five key styles.** Classic Casio, Soft pastel, Dark with colour bar, Bold
+  colour, and Product icons (tablets only; phones fall back to Soft pastel).
+  Pick one from the ⚙ button. Each till remembers its own choice.
+
+  <p align="center">
+    <img src="docs/styles.png" alt="The five key styles side by side" width="760">
+  </p>
+
 - **Works without internet.** The keys are pictures loaded from Shopify Files.
-  Every picture is checked when Dept Sale opens and again whenever the
-  connection comes back. Any key whose picture doesn't load becomes a plain
-  button, so the keypad always works.
+  When POS reports that the internet has dropped, every key switches to a
+  plain button, so the keypad keeps working. The pictures come back when the
+  connection does.
 - **Department tagging.** Each line gets a hidden `_ps_dept` property (for
   example `PARTY`). Customers and receipts don't show it, but it's on the order
   in admin and in exports, which is enough to build department totals.
@@ -113,6 +125,16 @@ python3 tools/make_keys.py
 After replacing images in Shopify Files, bump `KEY_IMAGES.version` so tills
 fetch the new ones instead of showing cached copies.
 
+The Product icons style uses AI-generated product pictures (one per department,
+on a white background) kept in `icon-sources/`. To change one, replace
+`icon-sources/icon-<department>.png` and run:
+
+```bash
+pip install "rembg[cpu]"
+python3 tools/cut_icons.py hardware     # cuts out the background -> icon-cutouts/
+python3 tools/make_keys.py icons        # rebuilds only the Product icons keys
+```
+
 ## Changing departments
 
 Everything a shop would want to change is in
@@ -142,8 +164,12 @@ extensions/dept-sale/
     imageProbe.js       checks which picture keys load
     *.test.js           tests
 tools/
-  make_keys.py          generates key-images/
+  make_keys.py          generates key-images/ (python3 tools/make_keys.py [style])
+  cut_icons.py          removes icon backgrounds: icon-sources/ -> icon-cutouts/
+  rename_icons.py       renames downloaded icons to icon-<department>
   fonts/                Inter (SIL Open Font License)
+icon-sources/           product pictures for the Product icons style
+icon-cutouts/           the same with transparent backgrounds
 key-images/             generated PNGs to upload to Shopify Files
 ```
 
@@ -172,6 +198,10 @@ this code.
   the existing line (Party ×3) and reports an error even though the item went
   in. Dept Sale checks the cart before showing an error, and Undo takes off one
   at a time.
+- **Missing pictures aren't detected.** Shopify's file server doesn't let an
+  extension check whether a file exists, so a picture that was never uploaded
+  (or was renamed on upload) shows as a broken image instead of falling back to
+  a button. After uploading, open Dept Sale once and check every key.
 - **Custom sales in reports.** Custom sales don't show up in product reports
   the way catalogue products do. The `_ps_dept` property is there for
   department totals, but check how your reports treat these lines before you
