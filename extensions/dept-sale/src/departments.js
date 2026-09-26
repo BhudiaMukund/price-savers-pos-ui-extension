@@ -243,11 +243,19 @@ export const KEY_IMAGES = {
 
 // Key styles staff can pick from the Style screen. Each till remembers its
 // own choice. `prefix` must match the file names made by tools/make_keys.py.
+// `phoneStyle` (optional): the style a phone shows instead of this one.
 export const STYLES = [
   { id: "classic", name: "Classic Casio", prefix: "ps-" },
   { id: "soft", name: "Soft pastel", prefix: "ps-soft-" },
   { id: "dark", name: "Dark with colour bar", prefix: "ps-dark-" },
   { id: "bold", name: "Bold colour", prefix: "ps-bold-" },
+  // Product pictures are too small to read on a phone key, so phones use Soft pastel.
+  {
+    id: "icons",
+    name: "Product icons",
+    prefix: "ps-icons-",
+    phoneStyle: "soft",
+  },
 ];
 
 // Style used until someone picks one on that till.

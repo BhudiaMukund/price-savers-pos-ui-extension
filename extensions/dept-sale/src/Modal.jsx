@@ -107,6 +107,9 @@ function DeptSale() {
   const [showStyles, setShowStyles] = useState(false);
   // Keys whose picture couldn't be loaded in the current style; those show as text.
   const [failed, setFailed] = useState(lastFailed[style] ?? new Set());
+  // Some styles (Product icons) are too detailed for a phone's tiny keys, so a
+  // phone shows that style's `phoneStyle` instead. The choice itself is kept.
+  const activeStyle = isTablet ? style : (getStyle(style).phoneStyle ?? style);
   // The keypad state also lives in a ref so key handlers never go stale and the
   // key grids can be drawn once instead of on every tap (much faster in POS).
   const padRef = useRef(initialState);
@@ -160,19 +163,19 @@ function DeptSale() {
 
   // Check the pictures on open, when the style changes, and when the internet comes back.
   useEffect(() => {
-    setFailed(lastFailed[style] ?? new Set());
+    setFailed(lastFailed[activeStyle] ?? new Set());
     if (!KEY_IMAGES.baseUrl || !online) return;
     let cancelled = false;
-    probeAll(ALL_CODES, imageFor(style))
+    probeAll(ALL_CODES, imageFor(activeStyle))
       .then((bad) => {
-        lastFailed[style] = bad;
+        lastFailed[activeStyle] = bad;
         if (!cancelled) setFailed(bad);
       })
       .catch(() => {});
     return () => {
       cancelled = true;
     };
-  }, [online, style]);
+  }, [online, activeStyle]);
 
   function chooseStyle(id) {
     lastStyle = id;
@@ -329,7 +332,7 @@ function DeptSale() {
           <s-clickable key={k} onClick={handlers[k]}>
             <s-box inlineSize={width} blockSize={px(L.numKeyH)}>
               <s-image
-                src={numImageUrl(k, style)}
+                src={numImageUrl(k, activeStyle)}
                 alt={numLabel(k)}
                 objectFit="contain"
                 inlineSize="fill"
@@ -357,7 +360,7 @@ function DeptSale() {
           <s-clickable key={d.code} onClick={handlers[d.code]}>
             <s-box inlineSize={px(L.deptKey)} blockSize={px(L.deptKeyH)}>
               <s-image
-                src={keyImageUrl(d.code, style)}
+                src={keyImageUrl(d.code, activeStyle)}
                 alt={isTablet ? d.label : d.short}
                 objectFit="contain"
                 inlineSize="fill"
@@ -396,7 +399,7 @@ function DeptSale() {
       ),
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isTablet, style, failed, online, picturesAvailable, handlers]);
+  }, [isTablet, activeStyle, failed, online, picturesAvailable, handlers]);
 
   // ---------------------------------------------------------------- Style screen
 
@@ -430,6 +433,9 @@ function DeptSale() {
                 <s-stack direction="block" gap="small">
                   <s-text type="strong">
                     {s.id === style ? `✓ ${s.name}` : s.name}
+                    {!isTablet && s.phoneStyle
+                      ? ` (tablet only; phones show ${getStyle(s.phoneStyle).name})`
+                      : ""}
                   </s-text>
                   {picturesAvailable && online && (
                     <s-box inlineSize={previewW} blockSize={previewH}>
