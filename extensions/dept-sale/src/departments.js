@@ -259,7 +259,7 @@ export const STYLES = [
 ];
 
 // Style used until someone picks one on that till.
-export const DEFAULT_STYLE = "classic";
+export const DEFAULT_STYLE = "icons";
 
 export function getStyle(id) {
   return (
