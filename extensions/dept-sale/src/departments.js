@@ -198,42 +198,90 @@ export const MAX_QTY = 99;
 // Phone:  number pad on top, department grid underneath, 5 across.
 // If the 5th department column wraps onto a new line on a phone, lower
 // phone.deptKey by a couple of px.
-// deptKeyH is the height of the picture keys (images are 4:3).
+// numKeyH / deptKeyH are the heights of the picture keys (images are 4:3).
+// On a tablet the number keys are the same size as the department keys so
+// the two grids line up row for row.
+// gapPx must be the size of the `gap` keyword in points. It's used to make the
+// Clear bar exactly as wide as the three keys above it. If the Clear bar looks
+// narrower or wider than the row above, nudge gapPx by 1-2.
 export const LAYOUT = {
   tablet: {
-    numKey: "88px",
-    deptKey: "120px",
-    deptKeyH: "90px",
+    numKey: 128,
+    numKeyH: 96,
+    deptKey: 128,
+    deptKeyH: 96,
     gap: "small",
+    gapPx: 12,
+    sectionGap: "large",
+    sectionGapPx: 20,
     padding: "base",
   },
   phone: {
-    numKey: "88px",
-    deptKey: "68px",
-    deptKeyH: "51px",
+    numKey: 88,
+    numKeyH: 66,
+    deptKey: 68,
+    deptKeyH: 51,
     gap: "small-400",
+    gapPx: 4,
+    sectionGap: "large",
+    sectionGapPx: 20,
     padding: "small",
   },
 };
 
-// Picture keys (Casio colours). Upload the files from key-images/ to
+// Picture keys. Upload every file from key-images/ to
 // Shopify admin -> Content -> Files, copy the URL of any one of them and
-// paste everything up to and including "/files/" here.
+// paste everything up to and including "/files/" into baseUrl.
 // Leave baseUrl empty ('') to always use the plain text keys.
 // Bump `version` whenever you re-upload changed images, so tills don't
 // keep showing the old cached ones.
 export const KEY_IMAGES = {
   baseUrl:
     "https://cdn.shopify.com/s/files/1/0705/9547/7672/files/",
-  version: "1",
+  version: "2",
 };
 
-export function keyImageUrl(code) {
+// Key styles staff can pick from the Style screen. Each till remembers its
+// own choice. `prefix` must match the file names made by tools/make_keys.py.
+export const STYLES = [
+  { id: "classic", name: "Classic Casio", prefix: "ps-" },
+  { id: "soft", name: "Soft pastel", prefix: "ps-soft-" },
+  { id: "dark", name: "Dark with colour bar", prefix: "ps-dark-" },
+  { id: "bold", name: "Bold colour", prefix: "ps-bold-" },
+];
+
+// Style used until someone picks one on that till.
+export const DEFAULT_STYLE = "classic";
+
+export function getStyle(id) {
+  return (
+    STYLES.find((s) => s.id === id) ??
+    STYLES.find((s) => s.id === DEFAULT_STYLE) ??
+    STYLES[0]
+  );
+}
+
+function imageUrl(file) {
   if (!KEY_IMAGES.baseUrl) return "";
   const base = KEY_IMAGES.baseUrl.endsWith("/")
     ? KEY_IMAGES.baseUrl
     : `${KEY_IMAGES.baseUrl}/`;
-  return `${base}ps-key-${code.toLowerCase()}.png?v=${KEY_IMAGES.version}`;
+  return `${base}${file}?v=${KEY_IMAGES.version}`;
+}
+
+// Department key picture, e.g. PARTY in 'soft' -> ps-soft-key-party.png
+export function keyImageUrl(code, styleId) {
+  return imageUrl(`${getStyle(styleId).prefix}key-${code.toLowerCase()}.png`);
+}
+
+// Number pad picture, e.g. '7' -> ps-soft-num-7.png, 'X' -> ...num-x.png, 'C' -> ...num-c.png
+export function numImageUrl(key, styleId) {
+  return imageUrl(`${getStyle(styleId).prefix}num-${key.toLowerCase()}.png`);
+}
+
+// Small strip shown on the Style screen, e.g. ps-soft-preview.png
+export function previewImageUrl(styleId) {
+  return imageUrl(`ps-${getStyle(styleId).id}-preview.png`);
 }
 
 // Hidden line-item property key. The leading underscore hides it from the

@@ -1,12 +1,17 @@
 import { render } from "preact";
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 
 import {
   DEPARTMENT_ROWS,
   LAYOUT,
   DEPT_PROPERTY_KEY,
   KEY_IMAGES,
+  STYLES,
+  DEFAULT_STYLE,
+  getStyle,
   keyImageUrl,
+  numImageUrl,
+  previewImageUrl,
 } from "./departments.js";
 import { initialState, press, formatCents } from "./keypad.js";
 import { probeAll } from "./imageProbe.js";
@@ -28,11 +33,60 @@ const NUM_ROWS = [
   ["C"],
 ];
 
-const ALL_CODES = DEPARTMENT_ROWS.flat().map((d) => d.code);
+// Every picture key: departments by code, number keys as NUM:<key>.
+const ALL_CODES = [
+  ...DEPARTMENT_ROWS.flat().map((d) => d.code),
+  ...NUM_ROWS.flat().map((k) => `NUM:${k}`),
+];
+const imageFor = (styleId) => (code) =>
+  code.startsWith("NUM:")
+    ? numImageUrl(code.slice(4), styleId)
+    : keyImageUrl(code, styleId);
 
-// Result of the last picture check, kept while POS keeps the extension loaded
-// so reopening Dept Sale doesn't flash text keys before switching to pictures.
-let lastFailed = null;
+const px = (n) => `${Math.round(n)}px`;
+
+// Visual feedback (POS extensions can't vibrate or play sounds).
+const STATUS_MS = 2500; // how long the green/red status pill stays before going back to plain text
+
+const STYLE_STORAGE_KEY = "keyStyle";
+
+// Results of the last picture check per style, kept while POS keeps the
+// extension loaded so reopening Dept Sale doesn't flash text keys first.
+const lastFailed = {};
+let lastStyle = null;
+
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// How many of this custom sale (same title and price) are in the cart right now,
+// and which line holds them. Used to double-check an add that POS reported as failed.
+function cartCount(title, cents) {
+  const lines = shopify.cart.current.value?.lineItems ?? [];
+  let qty = 0;
+  let uuid;
+  for (const l of lines) {
+    if (
+      l.productId == null &&
+      l.title === title &&
+      Math.round(Number(l.price) * 100) === cents
+    ) {
+      qty += l.quantity ?? 0;
+      uuid = l.uuid;
+    }
+  }
+  return { qty, uuid };
+}
+
+// POS sometimes reports an error even though the item did go into the cart
+// (seen when a repeat merges into an existing line). Check the cart a few times
+// before telling staff it failed.
+async function landedInCart(title, cents, qtyBefore, qty) {
+  for (let i = 0; i < 4; i++) {
+    await wait(250);
+    const now = cartCount(title, cents);
+    if (now.qty >= qtyBefore + qty) return now;
+  }
+  return null;
+}
 
 function isOnline(state) {
   // If POS can't tell us, assume online.
@@ -49,9 +103,32 @@ function DeptSale() {
   const [online, setOnline] = useState(
     isOnline(shopify.connectivity?.current?.value),
   );
-  // Department codes whose picture couldn't be loaded; those keys show as text.
-  const [failed, setFailed] = useState(lastFailed ?? new Set());
-  const busy = useRef(false);
+  const [style, setStyle] = useState(lastStyle ?? DEFAULT_STYLE);
+  const [showStyles, setShowStyles] = useState(false);
+  // Keys whose picture couldn't be loaded in the current style; those show as text.
+  const [failed, setFailed] = useState(lastFailed[style] ?? new Set());
+  // The keypad state also lives in a ref so key handlers never go stale and the
+  // key grids can be drawn once instead of on every tap (much faster in POS).
+  const padRef = useRef(initialState);
+  // Items are added to the cart one after another in the background, so staff
+  // can keep typing while POS saves the previous one.
+  const queue = useRef(Promise.resolve());
+  const addedRef = useRef([]); // same as `added`, readable immediately inside the queue
+  const [status, setStatus] = useState(null); // {tone, text} shown as a coloured pill
+  const timers = useRef({});
+
+  function later(name, ms, fn) {
+    clearTimeout(timers.current[name]);
+    timers.current[name] = setTimeout(fn, ms);
+  }
+  function showStatus(tone, text) {
+    setStatus({ tone, text });
+    later("status", STATUS_MS, () => setStatus(null));
+  }
+  useEffect(
+    () => () => Object.values(timers.current).forEach(clearTimeout),
+    [],
+  );
 
   useEffect(() => {
     const unsubs = [];
@@ -69,96 +146,311 @@ function DeptSale() {
       .isTablet()
       .then((tablet) => setIsTablet(Boolean(tablet)))
       .catch(() => {});
+    // This till's saved style (works offline).
+    Promise.resolve(shopify.storage?.get?.(STYLE_STORAGE_KEY))
+      .then((saved) => {
+        if (saved && STYLES.some((s) => s.id === saved)) {
+          lastStyle = saved;
+          setStyle(saved);
+        }
+      })
+      .catch(() => {});
     return () => unsubs.forEach((u) => u && u());
   }, []);
 
-  // Check the pictures on open and every time the internet comes back.
+  // Check the pictures on open, when the style changes, and when the internet comes back.
   useEffect(() => {
+    setFailed(lastFailed[style] ?? new Set());
     if (!KEY_IMAGES.baseUrl || !online) return;
     let cancelled = false;
-    probeAll(ALL_CODES, keyImageUrl)
+    probeAll(ALL_CODES, imageFor(style))
       .then((bad) => {
-        if (cancelled) return;
-        lastFailed = bad;
-        setFailed(bad);
+        lastFailed[style] = bad;
+        if (!cancelled) setFailed(bad);
       })
       .catch(() => {});
     return () => {
       cancelled = true;
     };
-  }, [online]);
+  }, [online, style]);
+
+  function chooseStyle(id) {
+    lastStyle = id;
+    setStyle(id);
+    setShowStyles(false);
+    Promise.resolve(shopify.storage?.set?.(STYLE_STORAGE_KEY, id)).catch(
+      () => {},
+    );
+    shopify.toast.show(`Style: ${getStyle(id).name}`);
+  }
 
   const L = isTablet ? LAYOUT.tablet : LAYOUT.phone;
-  const clearWidth = `${parseInt(L.numKey, 10) * 3 + 16}px`;
+  // Clear spans exactly three number keys plus the two gaps between them.
+  const clearWidth = px(L.numKey * 3 + L.gapPx * 2);
   const picturesAvailable = Boolean(KEY_IMAGES.baseUrl);
   // A key shows its picture only if pictures are set up, we're online, and
   // that key's image loaded in the last check. Otherwise it's a text button.
   const showPicture = (code) =>
     picturesAvailable && online && !failed.has(code);
 
-  async function onKey(key) {
-    if (busy.current) return; // ignore taps while a line is being added
+  function updatePad(next) {
+    padRef.current = next;
+    setPad(next);
+  }
 
-    const result = press(pad, key);
+  function onKey(key) {
+    const result = press(padRef.current, key);
+    updatePad(result.state);
     if (result.error) {
+      showStatus("critical", result.error);
       shopify.toast.show(result.error);
-      setPad(result.state);
       return;
     }
-    if (!result.sale) {
-      setPad(result.state);
-      return;
-    }
+    if (!result.sale) return;
 
     const { code, cents, qty } = result.sale;
     const dept = DEPTS_BY_CODE[code];
-    busy.current = true;
-    try {
-      const uuid = await shopify.cart.addCustomSale({
-        title: dept.title,
-        price: formatCents(cents),
-        quantity: qty,
-        taxable: dept.taxable,
-      });
+    const text = `${qty} × $${formatCents(cents)} ${dept.title}`;
+    queue.current = queue.current.then(async () => {
+      let uuid;
+      const before = cartCount(dept.title, cents);
+      try {
+        uuid = await shopify.cart.addCustomSale({
+          title: dept.title,
+          price: formatCents(cents),
+          quantity: qty,
+          taxable: dept.taxable,
+        });
+      } catch (err) {
+        // Believe the cart, not the error: if the quantity went up, it was added.
+        const landed = await landedInCart(dept.title, cents, before.qty, qty);
+        if (!landed) {
+          showStatus("critical", `Not added: ${text}`);
+          shopify.toast.show(
+            `Couldn't add ${text} (${err?.message ?? "unknown error"}). Please key it again.`,
+          );
+          return;
+        }
+        uuid = landed.uuid;
+      }
+
+      showStatus("success", `✓ Added ${text}`);
+      addedRef.current = [
+        { uuid, code, title: dept.title, cents, qty, taxable: dept.taxable },
+        ...addedRef.current,
+      ].slice(0, 20);
+      setAdded(addedRef.current);
+
+      // Tag the line with its department for reporting. Kept completely separate:
+      // if tagging fails (e.g. POS merged a repeat into an existing line), the
+      // sale is still in the cart, so staff see nothing.
       if (uuid) {
-        // Tag the line with its department for reporting. Not critical,
-        // so a failure here shouldn't block the sale.
-        shopify.cart
-          .addLineItemProperties(uuid, { [DEPT_PROPERTY_KEY]: code })
+        Promise.resolve()
+          .then(() =>
+            shopify.cart.addLineItemProperties(uuid, {
+              [DEPT_PROPERTY_KEY]: code,
+            }),
+          )
           .catch(() => {});
       }
-      setAdded((prev) =>
-        [{ uuid, title: dept.title, cents, qty }, ...prev].slice(0, 20),
-      );
-      setPad(result.state);
-    } catch (err) {
-      // Keep what was typed so staff can just press the key again.
-      shopify.toast.show(
-        `Couldn't add item: ${err?.message ?? "unknown error"}`,
-      );
-    } finally {
-      busy.current = false;
-    }
+    });
   }
 
-  async function undoLast() {
-    const [last, ...rest] = added;
-    if (!last || busy.current) return;
-    busy.current = true;
-    try {
-      if (last.uuid) await shopify.cart.removeLineItem(last.uuid);
-      shopify.toast.show(
-        `Removed ${last.qty} × $${formatCents(last.cents)} ${last.title}`,
-      );
-    } catch (err) {
-      shopify.toast.show(
-        `Couldn't remove: ${err?.message ?? "already removed from cart?"}`,
-      );
-    } finally {
-      setAdded(rest);
-      busy.current = false;
-    }
+  // Stable per-key tap handlers: the same function every render, so POS
+  // doesn't have to re-send every key when only the price changes.
+  const onKeyRef = useRef(onKey);
+  onKeyRef.current = onKey;
+  const handlers = useMemo(() => {
+    const h = {};
+    for (const k of NUM_ROWS.flat()) h[k] = () => onKeyRef.current(k);
+    for (const d of DEPARTMENT_ROWS.flat())
+      h[d.code] = () => onKeyRef.current(`DEPT:${d.code}`);
+    return h;
+  }, []);
+
+  function undoLast() {
+    queue.current = queue.current.then(async () => {
+      const last = addedRef.current[0];
+      if (!last) return;
+      addedRef.current = addedRef.current.slice(1);
+      setAdded(addedRef.current);
+      try {
+        if (last.uuid) {
+          // If POS merged repeats into one line (e.g. Party x3), only take off
+          // the last one: remove the line and put back the rest.
+          const line = shopify.cart.current.value?.lineItems?.find(
+            (l) => l.uuid === last.uuid,
+          );
+          const remaining = line ? line.quantity - last.qty : 0;
+          await shopify.cart.removeLineItem(last.uuid);
+          if (remaining > 0) {
+            const uuid = await shopify.cart.addCustomSale({
+              title: last.title,
+              price: formatCents(last.cents),
+              quantity: remaining,
+              taxable: last.taxable,
+            });
+            // Earlier entries pointing at the old line now point at the new one.
+            addedRef.current = addedRef.current.map((a) =>
+              a.uuid === last.uuid ? { ...a, uuid } : a,
+            );
+            setAdded(addedRef.current);
+            if (uuid) {
+              Promise.resolve()
+                .then(() =>
+                  shopify.cart.addLineItemProperties(uuid, {
+                    [DEPT_PROPERTY_KEY]: last.code,
+                  }),
+                )
+                .catch(() => {});
+            }
+          }
+        }
+        const text = `Removed ${last.qty} × $${formatCents(last.cents)} ${last.title}`;
+        showStatus("info", text);
+        shopify.toast.show(text);
+      } catch (err) {
+        shopify.toast.show(
+          `Couldn't remove: ${err?.message ?? "already removed from cart?"}`,
+        );
+      }
+    });
   }
+
+  // The key grids only change when the style, layout, connection or picture
+  // check changes, not on every tap, so they're built once and reused.
+  const { numberPad, departmentGrid } = useMemo(() => {
+    const numLabel = (k) => (k === "X" ? "×" : k === "C" ? "C (clear)" : k);
+
+    const numKey = (k) => {
+      const width = k === "C" ? clearWidth : px(L.numKey);
+      if (showPicture(`NUM:${k}`)) {
+        return (
+          <s-clickable key={k} onClick={handlers[k]}>
+            <s-box inlineSize={width} blockSize={px(L.numKeyH)}>
+              <s-image
+                src={numImageUrl(k, style)}
+                alt={numLabel(k)}
+                objectFit="contain"
+                inlineSize="fill"
+              />
+            </s-box>
+          </s-clickable>
+        );
+      }
+      return (
+        <s-box key={k} inlineSize={width}>
+          <s-button
+            variant="secondary"
+            tone={k === "C" ? "critical" : "auto"}
+            onClick={handlers[k]}
+          >
+            {numLabel(k)}
+          </s-button>
+        </s-box>
+      );
+    };
+
+    const deptKey = (d) => {
+      if (showPicture(d.code)) {
+        return (
+          <s-clickable key={d.code} onClick={handlers[d.code]}>
+            <s-box inlineSize={px(L.deptKey)} blockSize={px(L.deptKeyH)}>
+              <s-image
+                src={keyImageUrl(d.code, style)}
+                alt={isTablet ? d.label : d.short}
+                objectFit="contain"
+                inlineSize="fill"
+              />
+            </s-box>
+          </s-clickable>
+        );
+      }
+      return (
+        <s-box key={d.code} inlineSize={px(L.deptKey)}>
+          <s-button variant="primary" onClick={handlers[d.code]}>
+            {isTablet ? d.label : d.short}
+          </s-button>
+        </s-box>
+      );
+    };
+
+    return {
+      numberPad: (
+        <s-stack direction="block" gap={L.gap}>
+          {NUM_ROWS.map((row) => (
+            <s-stack key={row.join("")} direction="inline" gap={L.gap}>
+              {row.map(numKey)}
+            </s-stack>
+          ))}
+        </s-stack>
+      ),
+      departmentGrid: (
+        <s-stack direction="block" gap={L.gap}>
+          {DEPARTMENT_ROWS.map((row) => (
+            <s-stack key={row[0].code} direction="inline" gap={L.gap}>
+              {row.map(deptKey)}
+            </s-stack>
+          ))}
+        </s-stack>
+      ),
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isTablet, style, failed, online, picturesAvailable, handlers]);
+
+  // ---------------------------------------------------------------- Style screen
+
+  if (showStyles) {
+    const previewW = isTablet ? "600px" : "330px";
+    const previewH = isTablet ? "60px" : "33px";
+    return (
+      <s-page heading="Key style">
+        <s-button slot="secondary-actions" onClick={() => setShowStyles(false)}>
+          Done
+        </s-button>
+        <s-scroll-box>
+          <s-stack direction="block" gap="large" padding={L.padding}>
+            <s-text color="subdued">
+              Pick how the keys look on this till. Each till remembers its own
+              choice.
+            </s-text>
+            {!picturesAvailable && (
+              <s-text tone="caution">
+                Picture keys aren't set up yet (baseUrl is empty in
+                departments.js).
+              </s-text>
+            )}
+            {!online && picturesAvailable && (
+              <s-text tone="caution">
+                Offline: previews can't load, but you can still choose.
+              </s-text>
+            )}
+            {STYLES.map((s) => (
+              <s-clickable key={s.id} onClick={() => chooseStyle(s.id)}>
+                <s-stack direction="block" gap="small">
+                  <s-text type="strong">
+                    {s.id === style ? `✓ ${s.name}` : s.name}
+                  </s-text>
+                  {picturesAvailable && online && (
+                    <s-box inlineSize={previewW} blockSize={previewH}>
+                      <s-image
+                        src={previewImageUrl(s.id)}
+                        alt={s.name}
+                        objectFit="contain"
+                        inlineSize="fill"
+                      />
+                    </s-box>
+                  )}
+                </s-stack>
+              </s-clickable>
+            ))}
+          </s-stack>
+        </s-scroll-box>
+      </s-page>
+    );
+  }
+
+  // ---------------------------------------------------------------- Sale screen
 
   const priceShown = `$${formatCents(pad.entry === "" ? 0 : parseInt(pad.entry, 10))}`;
   const qtyShown = pad.qty > 1 ? `${pad.qty} × ` : "";
@@ -166,59 +458,16 @@ function DeptSale() {
     ? `Added: ${added[0].qty} × $${formatCents(added[0].cents)} ${added[0].title}`
     : "Type a price, then a department";
 
-  const numberPad = (
-    <s-stack direction="block" gap={L.gap}>
-      {NUM_ROWS.map((row) => (
-        <s-stack key={row.join("")} direction="inline" gap={L.gap}>
-          {row.map((k) => (
-            <s-box key={k} inlineSize={k === "C" ? clearWidth : L.numKey}>
-              <s-button
-                variant="secondary"
-                tone={k === "C" ? "critical" : "auto"}
-                onClick={() => onKey(k)}
-              >
-                {k === "X" ? "×" : k === "C" ? "C (clear)" : k}
-              </s-button>
-            </s-box>
-          ))}
-        </s-stack>
-      ))}
-    </s-stack>
-  );
+  const styleNote =
+    picturesAvailable && !online ? "Offline: using text keys" : null;
 
-  const pictureKey = (d) => (
-    <s-clickable key={d.code} onClick={() => onKey(`DEPT:${d.code}`)}>
-      <s-box inlineSize={L.deptKey} blockSize={L.deptKeyH}>
-        <s-image
-          src={keyImageUrl(d.code)}
-          alt={isTablet ? d.label : d.short}
-          objectFit="contain"
-          inlineSize="fill"
-        />
-      </s-box>
-    </s-clickable>
+  // The keyed-in price is always plain text so it's never wrong or missing.
+  const priceDisplay = (
+    <s-heading>
+      {qtyShown}
+      {priceShown}
+    </s-heading>
   );
-
-  const textKey = (d) => (
-    <s-box key={d.code} inlineSize={L.deptKey}>
-      <s-button variant="primary" onClick={() => onKey(`DEPT:${d.code}`)}>
-        {isTablet ? d.label : d.short}
-      </s-button>
-    </s-box>
-  );
-
-  const departmentGrid = (
-    <s-stack direction="block" gap={L.gap}>
-      {DEPARTMENT_ROWS.map((row) => (
-        <s-stack key={row[0].code} direction="inline" gap={L.gap}>
-          {row.map((d) => (showPicture(d.code) ? pictureKey(d) : textKey(d)))}
-        </s-stack>
-      ))}
-    </s-stack>
-  );
-
-  let styleNote = null;
-  if (picturesAvailable && !online) styleNote = "Offline: using text keys";
 
   return (
     <s-page heading="Dept Sale">
@@ -239,18 +488,32 @@ function DeptSale() {
               justifyContent="space-between"
               alignItems="center"
             >
-              <s-heading>
-                {qtyShown}
-                {priceShown}
-              </s-heading>
-              <s-text color="subdued">Cart {cartTotal}</s-text>
+              {priceDisplay}
+              <s-stack direction="inline" gap="base" alignItems="center">
+                <s-text color="subdued">Cart {cartTotal}</s-text>
+                <s-button
+                  variant="secondary"
+                  onClick={() => setShowStyles(true)}
+                >
+                  ⚙
+                </s-button>
+              </s-stack>
             </s-stack>
-            <s-text color="subdued">{lastLine}</s-text>
+            {status ? (
+              <s-badge tone={status.tone}>{status.text}</s-badge>
+            ) : (
+              <s-text color="subdued">{lastLine}</s-text>
+            )}
             {styleNote && <s-text tone="caution">{styleNote}</s-text>}
           </s-stack>
 
           {/* Tablet: side by side. Phone: number pad on top, departments below. */}
-          <s-stack direction={isTablet ? "inline" : "block"} gap="large">
+          {/* Full width with the grids centred, so spare space is split evenly. */}
+          <s-stack
+            direction={isTablet ? "inline" : "block"}
+            gap={L.sectionGap}
+            justifyContent="center"
+          >
             {numberPad}
             {departmentGrid}
           </s-stack>

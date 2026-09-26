@@ -1,156 +1,183 @@
-# Shopify App Template - Extension Only
+# Dept Sale
 
-This is a template for building a [Shopify app](https://shopify.dev/docs/apps/getting-started) using [Preact](https://preactjs.com/) and [Vite](https://vite.dev/). It uses Shopify's [Direct API access](https://shopify.dev/docs/api/app-home#direct-api-access) and [App Bridge](https://shopify.dev/docs/api/app-bridge) to make authenticated calls to the Shopify Admin API directly from the browser — no server required.
+A Shopify POS extension that gives the till a Casio-style department keypad.
+Type a price, press a department, and the item goes into the cart.
 
-Rather than cloning this repo, follow the [Quick Start steps](#quick-start) below.
+We built this for Price Savers, a party and souvenir shop in West Lakes, South
+Australia, when we moved off an old Casio cash register and onto Shopify POS.
+Most of the stock has barcodes, but plenty doesn't: loose novelties, seasonal
+lines, things with a torn label. On the Casio, staff rang those up with `450`
+then `PARTY`. On Shopify POS the same item means opening *Custom sale*, typing
+the price, tapping into the title field, typing a name on the on-screen
+keyboard and hitting Save. That's fine once. With a queue out the door it isn't.
 
-## Quick start
+Dept Sale puts the Casio's 25 department keys back, in the same positions, as a
+tile on the POS home screen.
 
-### Prerequisites
+<!-- Add a screenshot here, e.g. docs/tablet.png -->
 
-Before you begin, you'll need to [download and install the Shopify CLI](https://shopify.dev/docs/apps/tools/cli/getting-started) if you haven't already.
+## How staff use it
 
-### Setup
+| Keys | Result |
+| --- | --- |
+| `450` → **Party** | 1 × $4.50 Party |
+| `3` **×** `450` → **Party** | 3 × $4.50 Party |
+| **Party** again, nothing typed | Repeats the last Party price |
+| **Clear** | Clears the price and resets the quantity to 1 |
+| **Undo last** (top right) | Takes the last item back out of the cart |
 
-```shell
-shopify app init --template=https://github.com/Shopify/shopify-app-template-extension-only
+Prices are keyed in cents with no decimal point, same as the old till: `5` is
+$0.05, `1000` (or `10` `00`) is $10.00. Pressing a department with no price
+typed, when it isn't the same department as the last sale, shows *Type a price
+first* instead of adding anything.
+
+After each sale, a green pill under the price confirms what went in. If POS
+really couldn't add an item, the pill turns red and a message asks staff to
+key it again. Items are saved in the background, so staff can start typing the
+next price straight away.
+
+## What it does
+
+- **Same layout as the Casio.** 25 department keys in a 5 × 5 grid, with the
+  number pad beside them on a tablet or above them on a phone.
+- **Four key styles.** Classic Casio, Soft pastel, Dark with colour bar, and
+  Bold colour. Pick one from the ⚙ button. Each till remembers its own choice.
+- **Works without internet.** The keys are pictures loaded from Shopify Files.
+  Every picture is checked when Dept Sale opens and again whenever the
+  connection comes back. Any key whose picture doesn't load becomes a plain
+  button, so the keypad always works.
+- **Department tagging.** Each line gets a hidden `_ps_dept` property (for
+  example `PARTY`). Customers and receipts don't show it, but it's on the order
+  in admin and in exports, which is enough to build department totals.
+- **Guard rails.** A single key-in is capped at $999.99 and quantities at 99,
+  so an extra zero doesn't slip through unnoticed.
+
+## Setup
+
+You'll need Node 20+, the [Shopify CLI](https://shopify.dev/docs/api/shopify-cli)
+(3.92 or later) and a Shopify account that can create apps for your store.
+
+```bash
+npm install
+shopify app config link   # connect the project to your own app
+shopify app dev           # preview on a development store
 ```
 
-### Local Development
+With `shopify app dev` running, open the Dev Console (`p`), find the
+**dept-sale** row and open its **Mobile** preview link on a device that's
+logged in to the development store in Shopify POS. On an Android emulator it's
+quickest to push the link straight in:
 
-```shell
-shopify app dev
+```bash
+adb shell am start -a android.intent.action.VIEW -d "PASTE_PREVIEW_LINK"
 ```
 
-Press P to open the URL to your app. Once you click install, you can start development.
+Then add the tile: POS home screen → **Edit** → **Add tile** → **Apps** →
+**Dept Sale**.
 
-Local development is powered by [Shopify CLI](https://shopify.dev/docs/apps/build/cli-for-apps/test-apps-locally). It logs into your account, connects to an app, provides environment variables, updates remote config, creates a tunnel and provides commands to generate extensions.
+### Going live
 
-## How it works
-
-### Authentication
-
-This template uses [Shopify managed installation](https://shopify.dev/docs/apps/build/authentication-authorization/app-installation). Shopify handles the OAuth flow and app installation automatically. Once installed, the app is fully embedded in the Shopify Admin.
-
-### Querying data
-
-This template uses [Direct API access](https://shopify.dev/docs/api/app-home#direct-api-access) — the Shopify Admin API is called directly from the browser using App Bridge. No server-side code is needed.
-
-This template comes pre-configured with examples of querying data using GraphQL with direct API access, and using [metaobjects](https://shopify.dev/docs/apps/custom-data/metaobjects) to store and retrieve structured app data — see [/shared/models/faq.ts](./shared/models/faq.ts).
-
-### App Bridge
-
-[App Bridge](https://shopify.dev/docs/api/app-bridge) is loaded automatically in embedded apps.
-
-### Polaris Web Components
-
-This template uses [Polaris Web Components](https://shopify.dev/docs/api/app-home/web-components) — the native custom element version of Polaris that works in any framework (including Preact). No additional package installation is required as they are provided automatically in the Shopify Admin iframe.
-
-## GraphQL Codegen
-
-This template is pre-configured with [GraphQL Codegen](https://the-guild.dev/graphql/codegen) to generate TypeScript types from your GraphQL queries.
-
-To regenerate types after updating queries:
-
-```shell
-npm run codegen
+```bash
+shopify app deploy
 ```
 
-To watch for changes:
+In the Dev Dashboard, open the app, choose **Custom distribution**, enter your
+store's `.myshopify.com` domain and install the app from the link it generates.
+Later deploys go to the store automatically, and tills pick them up the next
+time POS reloads.
 
-```shell
-npm run codegen:watch
+If staff can't see the tile, give their POS role access to apps under
+**Settings → Users and permissions → POS roles**.
+
+## Picture keys
+
+Without pictures, the keys are standard POS buttons and everything still works.
+To turn on the styled keys:
+
+1. Upload everything in `key-images/` to **Shopify admin → Content → Files**.
+   Don't rename anything. If a file with the same name already exists, Shopify
+   saves the new one as `name_1.png` and that key will fall back to a button.
+2. Copy the URL of any uploaded file and paste everything up to and including
+   `/files/` into `KEY_IMAGES.baseUrl` in
+   `extensions/dept-sale/src/departments.js`.
+3. Deploy.
+
+The pictures are generated, not drawn by hand. To change a colour, label or
+style, edit `tools/make_keys.py` and run it:
+
+```bash
+pip install pillow
+python3 tools/make_keys.py
 ```
 
-## Build
+After replacing images in Shopify Files, bump `KEY_IMAGES.version` so tills
+fetch the new ones instead of showing cached copies.
 
-Build the app by running:
+## Changing departments
 
-Using npm:
+Everything a shop would want to change is in
+`extensions/dept-sale/src/departments.js`:
 
-```shell
-npm run build
+- `DEPARTMENT_ROWS` holds the keys, in till order. For each one, `label` is
+  the text on a tablet key, `short` is the text on a phone key, and `title` is
+  what shows in the cart and on the receipt. Set `taxable: false` for a
+  GST-free department.
+- `MAX_PRICE_CENTS` and `MAX_QTY` set the guard rails.
+- `LAYOUT` sets the key sizes for tablets and phones.
+- `STYLES` and `DEFAULT_STYLE` set the key styles.
+
+If you add or rename a department and use picture keys, add it to `DEPTS` in
+`tools/make_keys.py` too and regenerate the images.
+
+## Project layout
+
+```
+extensions/dept-sale/
+  shopify.extension.toml
+  src/
+    Tile.jsx            home screen tile
+    Modal.jsx           the keypad screen
+    departments.js      departments, layout, styles, picture settings
+    keypad.js           keypad logic (no Shopify calls)
+    imageProbe.js       checks which picture keys load
+    *.test.js           tests
+tools/
+  make_keys.py          generates key-images/
+  fonts/                Inter (SIL Open Font License)
+key-images/             generated PNGs to upload to Shopify Files
 ```
 
-Using yarn:
+## Tests
 
-```shell
-yarn build
+The keypad logic and the picture check are plain JavaScript, so they run under
+Node without POS:
+
+```bash
+node --test extensions/dept-sale/src/keypad.test.js extensions/dept-sale/src/imageProbe.test.js
 ```
 
-Using pnpm:
+## Known limits
 
-```shell
-pnpm run build
-```
+These come from what POS extensions are allowed to do, not from choices in
+this code.
 
-## Shopify Dev MCP
+- **No haptics or sound.** POS extensions can't vibrate the device or play a
+  sound. Feedback is visual only.
+- **Small price text.** POS doesn't let extensions set text size, so the price
+  display uses the largest heading POS offers.
+- **Scanning while the keypad is open.** Barcode scans may not reach the cart
+  while Dept Sale is on screen. Close it to scan, and reopen it for the next
+  unlabelled item.
+- **Repeat sales can merge.** POS sometimes merges a repeated custom sale into
+  the existing line (Party ×3) and reports an error even though the item went
+  in. Dept Sale checks the cart before showing an error, and Undo takes off one
+  at a time.
+- **Custom sales in reports.** Custom sales don't show up in product reports
+  the way catalogue products do. The `_ps_dept` property is there for
+  department totals, but check how your reports treat these lines before you
+  rely on them.
 
-This template is configured with the Shopify Dev MCP. This instructs [Cursor](https://cursor.com/), [GitHub Copilot](https://github.com/features/copilot), [Claude Code](https://claude.com/product/claude-code), and [Google Gemini CLI](https://github.com/google-gemini/gemini-cli) to use the Shopify Dev MCP.
+## License
 
-For more information on the Shopify Dev MCP please read [the documentation](https://shopify.dev/docs/apps/build/devmcp).
-
-## Metafields and Metaobjects
-
-This template uses [metaobjects](https://shopify.dev/docs/apps/custom-data/metaobjects) and [metafields](https://shopify.dev/docs/apps/custom-data/metafields) to store structured app data without a custom database.
-
-### Metaobject: FAQ
-
-The template defines a `faq` metaobject type for storing FAQ entries. Each FAQ has a question, answer, a flag to control visibility on the FAQ page, and optional product associations.
-
-Defined in `shopify.app.toml`:
-
-```toml
-[metaobjects.app.faq]
-name = "FAQ"
-
-[metaobjects.app.faq.fields.question]
-name = "Question"
-type = "single_line_text_field"
-required = true
-
-[metaobjects.app.faq.fields.answer]
-name = "Answer"
-type = "multi_line_text_field"
-required = true
-
-[metaobjects.app.faq.fields.show_on_faq_page]
-name = "Show on FAQ page"
-type = "boolean"
-
-[metaobjects.app.faq.fields.products]
-name = "Products"
-type = "list.product_reference"
-```
-
-### Metafield: Product FAQ
-
-A metafield definition links individual products to a FAQ metaobject entry, allowing merchants to associate a FAQ with specific products.
-
-```toml
-[product.metafields.app.faq]
-name = "FAQ"
-description = "FAQ for this product"
-type = "metaobject_reference<$app:faq>"
-access.admin = "merchant_read_write"
-```
-
-These definitions are automatically synced to Shopify when you run `shopify app dev` or `shopify app deploy`. See [/shared/models/faq.ts](./shared/models/faq.ts) for the client-side model that reads and writes these metaobjects via the Admin GraphQL API.
-
-## Resources
-
-Preact & Vite:
-
-- [Preact docs](https://preactjs.com/guide/v10/getting-started)
-- [Vite docs](https://vite.dev/)
-
-Shopify:
-
-- [Intro to Shopify apps](https://shopify.dev/docs/apps/getting-started)
-- [Direct API access](https://shopify.dev/docs/api/app-home#direct-api-access)
-- [Shopify CLI](https://shopify.dev/docs/apps/tools/cli)
-- [App Bridge](https://shopify.dev/docs/api/app-bridge)
-- [Polaris Web Components](https://shopify.dev/docs/api/app-home/web-components)
-- [Metaobjects](https://shopify.dev/docs/apps/custom-data/metaobjects)
-- [App extensions](https://shopify.dev/docs/apps/app-extensions/list)
-- [Shopify Functions](https://shopify.dev/docs/api/functions)
+Apache-2.0. Inter is included under the SIL Open Font License; see
+`tools/fonts/Inter-LICENSE.txt`.
