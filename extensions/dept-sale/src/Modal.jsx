@@ -15,6 +15,7 @@ import {
 } from "./departments.js";
 import { initialState, press, formatCents } from "./keypad.js";
 import { probeAll } from "./imageProbe.js";
+import { findByBarcode } from "./barcode.js";
 
 export default async () => {
   render(<DeptSale />, document.body);
@@ -49,6 +50,10 @@ const px = (n) => `${Math.round(n)}px`;
 const STATUS_MS = 2500; // how long the green/red status pill stays before going back to plain text
 
 const STYLE_STORAGE_KEY = "keyStyle";
+
+// POS can replay the last scan when a screen subscribes to the scanner.
+// A scan identical to that one arriving this soon after opening is ignored.
+const STALE_SCAN_MS = 600;
 
 // Results of the last picture check per style, kept while POS keeps the
 // extension loaded so reopening Dept Sale doesn't flash text keys first.
@@ -118,6 +123,8 @@ function DeptSale() {
   const queue = useRef(Promise.resolve());
   const addedRef = useRef([]); // same as `added`, readable immediately inside the queue
   const [status, setStatus] = useState(null); // {tone, text} shown as a coloured pill
+  const onlineRef = useRef(online);
+  onlineRef.current = online;
   const timers = useRef({});
 
   function later(name, ms, fn) {
@@ -239,7 +246,15 @@ function DeptSale() {
 
       showStatus("success", `✓ Added ${text}`);
       addedRef.current = [
-        { uuid, code, title: dept.title, cents, qty, taxable: dept.taxable },
+        {
+          kind: "dept",
+          uuid,
+          code,
+          title: dept.title,
+          cents,
+          qty,
+          taxable: dept.taxable,
+        },
         ...addedRef.current,
       ].slice(0, 20);
       setAdded(addedRef.current);
@@ -258,6 +273,75 @@ function DeptSale() {
       }
     });
   }
+
+  // A barcode scanned while Dept Sale is open. POS doesn't add it to the cart
+  // itself while this screen is showing, so look the product up and add it.
+  // A quantity typed with × first applies to the scan (3 × scan = 3 of it).
+  function onScan(code) {
+    const qty = padRef.current.qty > 1 ? padRef.current.qty : 1;
+    if (qty > 1) updatePad({ ...padRef.current, qty: 1 });
+    showStatus("info", `Looking up ${code}…`);
+    queue.current = queue.current.then(async () => {
+      const found = await findByBarcode(code, {
+        productSearch: shopify.productSearch,
+        fetchFn: globalThis.fetch,
+        online: onlineRef.current,
+      });
+      if (!found) {
+        showStatus("critical", `Not found: ${code}`);
+        shopify.toast.show(
+          `No product with barcode ${code}. Key it in with a department.`,
+        );
+        return;
+      }
+      let uuid;
+      try {
+        uuid = await shopify.cart.addLineItem(found.variantId, qty);
+      } catch (err) {
+        showStatus("critical", `Not added: ${found.title}`);
+        shopify.toast.show(
+          `Couldn't add ${found.title} (${err?.message ?? "unknown error"}).`,
+        );
+        return;
+      }
+      if (!uuid) {
+        // Staff dismissed POS's out-of-stock warning.
+        showStatus("caution", `Not added: ${found.title} (out of stock)`);
+        return;
+      }
+      const cents = Math.round(Number(found.price ?? 0) * 100);
+      const priceText = found.price != null ? ` $${formatCents(cents)}` : "";
+      showStatus("success", `✓ Added ${qty} × ${found.title}${priceText}`);
+      addedRef.current = [
+        {
+          kind: "product",
+          uuid,
+          variantId: found.variantId,
+          title: found.title,
+          cents,
+          qty,
+        },
+        ...addedRef.current,
+      ].slice(0, 20);
+      setAdded(addedRef.current);
+    });
+  }
+  const onScanRef = useRef(onScan);
+  onScanRef.current = onScan;
+
+  useEffect(() => {
+    const signal = shopify.scanner?.scannerData?.current;
+    if (!signal?.subscribe) return undefined;
+    const openedAt = Date.now();
+    const staleData = signal.value?.data;
+    const unsubscribe = signal.subscribe((scan) => {
+      const code = String(scan?.data ?? "").trim();
+      if (!code) return;
+      if (code === staleData && Date.now() - openedAt < STALE_SCAN_MS) return;
+      onScanRef.current(code);
+    });
+    return () => unsubscribe && unsubscribe();
+  }, []);
 
   // Stable per-key tap handlers: the same function every render, so POS
   // doesn't have to re-send every key when only the price changes.
@@ -287,29 +371,37 @@ function DeptSale() {
           const remaining = line ? line.quantity - last.qty : 0;
           await shopify.cart.removeLineItem(last.uuid);
           if (remaining > 0) {
-            const uuid = await shopify.cart.addCustomSale({
-              title: last.title,
-              price: formatCents(last.cents),
-              quantity: remaining,
-              taxable: last.taxable,
-            });
+            let uuid;
+            if (last.kind === "product") {
+              uuid = await shopify.cart.addLineItem(last.variantId, remaining);
+            } else {
+              uuid = await shopify.cart.addCustomSale({
+                title: last.title,
+                price: formatCents(last.cents),
+                quantity: remaining,
+                taxable: last.taxable,
+              });
+              if (uuid) {
+                Promise.resolve()
+                  .then(() =>
+                    shopify.cart.addLineItemProperties(uuid, {
+                      [DEPT_PROPERTY_KEY]: last.code,
+                    }),
+                  )
+                  .catch(() => {});
+              }
+            }
             // Earlier entries pointing at the old line now point at the new one.
             addedRef.current = addedRef.current.map((a) =>
               a.uuid === last.uuid ? { ...a, uuid } : a,
             );
             setAdded(addedRef.current);
-            if (uuid) {
-              Promise.resolve()
-                .then(() =>
-                  shopify.cart.addLineItemProperties(uuid, {
-                    [DEPT_PROPERTY_KEY]: last.code,
-                  }),
-                )
-                .catch(() => {});
-            }
           }
         }
-        const text = `Removed ${last.qty} × $${formatCents(last.cents)} ${last.title}`;
+        const text =
+          last.kind === "product"
+            ? `Removed ${last.qty} × ${last.title}`
+            : `Removed ${last.qty} × $${formatCents(last.cents)} ${last.title}`;
         showStatus("info", text);
         shopify.toast.show(text);
       } catch (err) {
@@ -461,8 +553,10 @@ function DeptSale() {
   const priceShown = `$${formatCents(pad.entry === "" ? 0 : parseInt(pad.entry, 10))}`;
   const qtyShown = pad.qty > 1 ? `${pad.qty} × ` : "";
   const lastLine = added[0]
-    ? `Added: ${added[0].qty} × $${formatCents(added[0].cents)} ${added[0].title}`
-    : "Type a price, then a department";
+    ? added[0].kind === "product"
+      ? `Added: ${added[0].qty} × ${added[0].title}`
+      : `Added: ${added[0].qty} × $${formatCents(added[0].cents)} ${added[0].title}`
+    : "Type a price and a department, or scan a barcode";
 
   const styleNote =
     picturesAvailable && !online ? "Offline: using text keys" : null;

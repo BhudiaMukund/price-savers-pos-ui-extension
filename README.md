@@ -30,6 +30,8 @@ tile on the POS home screen.
 | `3` **×** `450` → **Party** | 3 × $4.50 Party |
 | **Party** again, nothing typed | Repeats the last Party price |
 | **Clear** | Clears the price and resets the quantity to 1 |
+| Scan a barcode | Adds that product, same as scanning on the normal POS screen |
+| `3` **×**, then scan | Adds 3 of the scanned product |
 | **Undo last** (top right) | Takes the last item back out of the cart |
 
 Prices are keyed in cents with no decimal point, same as the old till: `5` is
@@ -58,6 +60,11 @@ next price straight away.
   When POS reports that the internet has dropped, every key switches to a
   plain button, so the keypad keeps working. The pictures come back when the
   connection does.
+- **Scanning keeps working.** POS doesn't add scanned items to the cart while an
+  extension screen is open, so Dept Sale catches the scan itself, finds the
+  product (first on the till, then from Shopify if the till doesn't have it)
+  and adds it. Unknown barcodes show *Not found* so staff can key the item in
+  with a department instead.
 - **Department tagging.** Each line gets a hidden `_ps_dept` property (for
   example `PARTY`). Customers and receipts don't show it, but it's on the order
   in admin and in exports, which is enough to build department totals.
@@ -68,6 +75,14 @@ next price straight away.
 
 You'll need Node 20+, the [Shopify CLI](https://shopify.dev/docs/api/shopify-cli)
 (3.92 or later) and a Shopify account that can create apps for your store.
+
+Scanning while Dept Sale is open needs read-only product access. In
+`shopify.app.toml`:
+
+```toml
+[access_scopes]
+scopes = "read_products"
+```
 
 ```bash
 npm install
@@ -162,6 +177,7 @@ extensions/dept-sale/
     departments.js      departments, layout, styles, picture settings
     keypad.js           keypad logic (no Shopify calls)
     imageProbe.js       checks which picture keys load
+    barcode.js          finds the product for a scanned barcode
     *.test.js           tests
 tools/
   make_keys.py          generates key-images/ (python3 tools/make_keys.py [style])
@@ -175,11 +191,11 @@ key-images/             generated PNGs to upload to Shopify Files
 
 ## Tests
 
-The keypad logic and the picture check are plain JavaScript, so they run under
+The keypad logic, picture check and barcode lookup are plain JavaScript, so they run under
 Node without POS:
 
 ```bash
-node --test extensions/dept-sale/src/keypad.test.js extensions/dept-sale/src/imageProbe.test.js
+node --test extensions/dept-sale/src/keypad.test.js extensions/dept-sale/src/imageProbe.test.js extensions/dept-sale/src/barcode.test.js
 ```
 
 ## Known limits
@@ -191,9 +207,11 @@ this code.
   sound. Feedback is visual only.
 - **Small price text.** POS doesn't let extensions set text size, so the price
   display uses the largest heading POS offers.
-- **Scanning while the keypad is open.** Barcode scans may not reach the cart
-  while Dept Sale is on screen. Close it to scan, and reopen it for the next
-  unlabelled item.
+- **Scanned items are looked up by Dept Sale.** The till's own product search
+  can miss barcodes on large catalogues, so Dept Sale falls back to asking
+  Shopify. That needs internet and the `read_products` permission, and may not
+  work for every staff login. If a scan says *Not found* for a product you
+  know exists, close Dept Sale and scan it on the normal POS screen.
 - **Repeat sales can merge.** POS sometimes merges a repeated custom sale into
   the existing line (Party ×3) and reports an error even though the item went
   in. Dept Sale checks the cart before showing an error, and Undo takes off one
