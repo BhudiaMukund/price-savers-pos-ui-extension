@@ -39,10 +39,12 @@ $0.05, `1000` (or `10` `00`) is $10.00. Pressing a department with no price
 typed, when it isn't the same department as the last sale, shows *Type a price
 first* instead of adding anything.
 
-After each sale, a green pill under the price confirms what went in. If POS
-really couldn't add an item, the pill turns red and a message asks staff to
-key it again. Items are saved in the background, so staff can start typing the
-next price straight away.
+A green pill under the price shows what went in the moment a key is tapped or
+a product is found. POS confirms adds a little later, and if one really
+fails, the pill turns red and a message asks staff to key it again. Items are
+saved in the background, so staff can start typing the next price straight
+away. Scanned barcodes are remembered, so scanning the same product again is
+instant.
 
 ## What it does
 

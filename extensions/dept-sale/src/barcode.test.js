@@ -1,7 +1,14 @@
 // Run with: node --test extensions/dept-sale/src/barcode.test.js
-import { test } from "node:test";
+import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { sameBarcode, findByBarcode } from "./barcode.js";
+import {
+  sameBarcode,
+  findByBarcode,
+  clearBarcodeCache,
+  cachedBarcode,
+} from "./barcode.js";
+
+beforeEach(() => clearBarcodeCache());
 
 const balloons = {
   id: 111,
@@ -155,4 +162,51 @@ test("Shopify permission error returns not found instead of throwing", async () 
 
 test("empty scan returns null", async () => {
   assert.equal(await findByBarcode("   ", {}), null);
+});
+
+test("a repeat scan comes from the cache without searching again", async () => {
+  let searches = 0;
+  const ps = {
+    searchProducts: async () => {
+      searches++;
+      return { items: [balloons] };
+    },
+  };
+  await findByBarcode("9312345678901", { productSearch: ps, online: false });
+  const again = await findByBarcode("09312345678901", {
+    productSearch: ps,
+    online: false,
+  });
+  assert.equal(again.variantId, 9001);
+  assert.equal(searches, 1);
+  assert.equal(cachedBarcode("9312345678901").variantId, 9001);
+});
+
+test("Shopify answer wins when the till search is slow", async () => {
+  const slow = {
+    searchProducts: () =>
+      new Promise((r) => setTimeout(() => r({ items: [] }), 300)),
+  };
+  const fetchFn = adminReturning([
+    {
+      legacyResourceId: "5",
+      barcode: "888",
+      title: "Default Title",
+      displayName: "Fast",
+      price: "2.00",
+      product: { title: "Fast" },
+    },
+  ]);
+  const t0 = Date.now();
+  const r = await findByBarcode("888", { productSearch: slow, fetchFn });
+  assert.equal(r.variantId, 5);
+  assert.ok(Date.now() - t0 < 200);
+});
+
+test("not found is not cached", async () => {
+  await findByBarcode("4444", {
+    productSearch: deviceSearch([]),
+    online: false,
+  });
+  assert.equal(cachedBarcode("4444"), null);
 });

@@ -10,6 +10,16 @@
 // Everything Shopify-specific is passed in, so this file can be unit-tested.
 
 const ADMIN_TIMEOUT_MS = 5000;
+const CACHE_MS = 30 * 60 * 1000;
+
+// Barcodes found recently, so scanning the same product again is instant.
+// Kept while POS keeps the extension loaded.
+const cache = new Map();
+export function clearBarcodeCache() {
+  cache.clear();
+}
+const cacheKey = (code) =>
+  /^\d+$/.test(code) ? code.replace(/^0+/, "") : code.toLowerCase();
 
 // Barcodes can arrive with or without leading zeros (UPC-A 12 digits vs
 // EAN-13 with a leading 0), so compare numeric codes without them.
@@ -56,27 +66,36 @@ export async function searchOnDevice(code, productSearch) {
   if (!productSearch?.searchProducts) return null;
   const result = await productSearch.searchProducts({
     queryString: code,
-    first: 20,
+    first: 10,
   });
-  for (const product of result?.items ?? []) {
-    let variants = product.variants;
-    if (
-      (!variants || variants.length === 0) &&
-      productSearch.fetchProductVariantsWithProductId
-    ) {
-      variants = await productSearch.fetchProductVariantsWithProductId(
-        product.id,
-      );
-    }
+  const items = result?.items ?? [];
+  const hit = (variants, product) => {
     const match = (variants ?? []).find((v) => sameBarcode(v.barcode, code));
-    if (match) {
-      return {
-        variantId: Number(match.id),
-        title: describe(match, product),
-        price: match.price,
-        source: "device",
-      };
-    }
+    return match
+      ? {
+          variantId: Number(match.id),
+          title: describe(match, product),
+          price: match.price,
+          source: "device",
+        }
+      : null;
+  };
+  // Check the variants that came with the results first (no extra calls).
+  for (const product of items) {
+    const found = hit(product.variants, product);
+    if (found) return found;
+  }
+  // Then fetch variants for any results that came without them, all at once.
+  if (!productSearch.fetchProductVariantsWithProductId) return null;
+  const missing = items.filter((p) => !p.variants || p.variants.length === 0);
+  const fetched = await Promise.all(
+    missing.map((p) =>
+      productSearch.fetchProductVariantsWithProductId(p.id).catch(() => []),
+    ),
+  );
+  for (let i = 0; i < missing.length; i++) {
+    const found = hit(fetched[i], missing[i]);
+    if (found) return found;
   }
   return null;
 }
@@ -113,23 +132,50 @@ export async function searchAdmin(code, fetchFn) {
   };
 }
 
+// Resolves with the first non-null result, or null once all are done.
+function firstFound(promises) {
+  return new Promise((resolve) => {
+    let left = promises.length;
+    if (left === 0) resolve(null);
+    for (const p of promises) {
+      p.then(
+        (v) => {
+          if (v) resolve(v);
+          else if (--left === 0) resolve(null);
+        },
+        () => {
+          if (--left === 0) resolve(null);
+        },
+      );
+    }
+  });
+}
+
 // Returns {variantId, title, price, source} or null if not found anywhere.
+// The till and Shopify are asked at the same time and the first match wins,
+// so a slow till search doesn't hold up a scan.
 export async function findByBarcode(
   code,
   { productSearch, fetchFn, online = true } = {},
 ) {
   const clean = String(code ?? "").trim();
   if (!clean) return null;
-  try {
-    const onDevice = await searchOnDevice(clean, productSearch);
-    if (onDevice) return onDevice;
-  } catch {
-    // fall through to Shopify
-  }
-  if (!online) return null;
-  try {
-    return await searchAdmin(clean, fetchFn);
-  } catch {
-    return null;
-  }
+  const key = cacheKey(clean);
+  const cached = cache.get(key);
+  if (cached && Date.now() - cached.at < CACHE_MS) return cached.result;
+
+  const lookups = [
+    Promise.resolve().then(() => searchOnDevice(clean, productSearch)),
+  ];
+  if (online)
+    lookups.push(Promise.resolve().then(() => searchAdmin(clean, fetchFn)));
+  const result = await firstFound(lookups);
+  if (result) cache.set(key, { at: Date.now(), result });
+  return result;
+}
+
+// Instant answer for a barcode scanned recently, without searching.
+export function cachedBarcode(code) {
+  const hit = cache.get(cacheKey(String(code ?? "").trim()));
+  return hit && Date.now() - hit.at < CACHE_MS ? hit.result : null;
 }

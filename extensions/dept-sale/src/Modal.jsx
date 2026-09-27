@@ -15,7 +15,7 @@ import {
 } from "./departments.js";
 import { initialState, press, formatCents } from "./keypad.js";
 import { probeAll } from "./imageProbe.js";
-import { findByBarcode } from "./barcode.js";
+import { findByBarcode, cachedBarcode } from "./barcode.js";
 
 export default async () => {
   render(<DeptSale />, document.body);
@@ -140,6 +140,18 @@ function DeptSale() {
     [],
   );
 
+  // The list behind Undo. Entries go in as soon as staff tap, and come out
+  // again if POS couldn't add them.
+  function remember(entry) {
+    addedRef.current = [entry, ...addedRef.current].slice(0, 20);
+    setAdded(addedRef.current);
+  }
+  function forget(entry) {
+    entry.failed = true;
+    addedRef.current = addedRef.current.filter((a) => a !== entry);
+    setAdded(addedRef.current);
+  }
+
   useEffect(() => {
     const unsubs = [];
     unsubs.push(
@@ -221,6 +233,19 @@ function DeptSale() {
     const { code, cents, qty } = result.sale;
     const dept = DEPTS_BY_CODE[code];
     const text = `${qty} × $${formatCents(cents)} ${dept.title}`;
+    // Show it straight away. POS takes a moment to confirm, and failures are
+    // rare, so the pill only changes again if the add really fails.
+    const entry = {
+      kind: "dept",
+      uuid: undefined,
+      code,
+      title: dept.title,
+      cents,
+      qty,
+      taxable: dept.taxable,
+    };
+    remember(entry);
+    showStatus("success", `✓ ${text}`);
     queue.current = queue.current.then(async () => {
       let uuid;
       const before = cartCount(dept.title, cents);
@@ -235,6 +260,7 @@ function DeptSale() {
         // Believe the cart, not the error: if the quantity went up, it was added.
         const landed = await landedInCart(dept.title, cents, before.qty, qty);
         if (!landed) {
+          forget(entry);
           showStatus("critical", `Not added: ${text}`);
           shopify.toast.show(
             `Couldn't add ${text} (${err?.message ?? "unknown error"}). Please key it again.`,
@@ -244,20 +270,7 @@ function DeptSale() {
         uuid = landed.uuid;
       }
 
-      showStatus("success", `✓ Added ${text}`);
-      addedRef.current = [
-        {
-          kind: "dept",
-          uuid,
-          code,
-          title: dept.title,
-          cents,
-          qty,
-          taxable: dept.taxable,
-        },
-        ...addedRef.current,
-      ].slice(0, 20);
-      setAdded(addedRef.current);
+      entry.uuid = uuid;
 
       // Tag the line with its department for reporting. Kept completely separate:
       // if tagging fails (e.g. POS merged a repeat into an existing line), the
@@ -280,13 +293,36 @@ function DeptSale() {
   function onScan(code) {
     const qty = padRef.current.qty > 1 ? padRef.current.qty : 1;
     if (qty > 1) updatePad({ ...padRef.current, qty: 1 });
-    showStatus("info", `Looking up ${code}…`);
+    const describe = (found) => {
+      const cents = Math.round(Number(found.price ?? 0) * 100);
+      return {
+        cents,
+        text: `${qty} × ${found.title}${found.price != null ? ` $${formatCents(cents)}` : ""}`,
+      };
+    };
+    // Start looking straight away, alongside anything still being added.
+    // Only the cart add waits its turn, so items still go in in scan order.
+    const known = cachedBarcode(code);
+    const lookup = known
+      ? Promise.resolve(known)
+      : findByBarcode(code, {
+          productSearch: shopify.productSearch,
+          fetchFn: globalThis.fetch,
+          online: onlineRef.current,
+        });
+    if (known) showStatus("success", `✓ ${describe(known).text}`);
+    else {
+      showStatus("info", `Looking up ${code}…`);
+      lookup
+        .then(
+          (found) =>
+            found && showStatus("success", `✓ ${describe(found).text}`),
+        )
+        .catch(() => {});
+    }
+
     queue.current = queue.current.then(async () => {
-      const found = await findByBarcode(code, {
-        productSearch: shopify.productSearch,
-        fetchFn: globalThis.fetch,
-        online: onlineRef.current,
-      });
+      const found = await lookup.catch(() => null);
       if (!found) {
         showStatus("critical", `Not found: ${code}`);
         shopify.toast.show(
@@ -294,6 +330,7 @@ function DeptSale() {
         );
         return;
       }
+      const { cents, text } = describe(found);
       let uuid;
       try {
         uuid = await shopify.cart.addLineItem(found.variantId, qty);
@@ -309,21 +346,15 @@ function DeptSale() {
         showStatus("caution", `Not added: ${found.title} (out of stock)`);
         return;
       }
-      const cents = Math.round(Number(found.price ?? 0) * 100);
-      const priceText = found.price != null ? ` $${formatCents(cents)}` : "";
-      showStatus("success", `✓ Added ${qty} × ${found.title}${priceText}`);
-      addedRef.current = [
-        {
-          kind: "product",
-          uuid,
-          variantId: found.variantId,
-          title: found.title,
-          cents,
-          qty,
-        },
-        ...addedRef.current,
-      ].slice(0, 20);
-      setAdded(addedRef.current);
+      remember({
+        kind: "product",
+        uuid,
+        variantId: found.variantId,
+        title: found.title,
+        cents,
+        qty,
+        text,
+      });
     });
   }
   const onScanRef = useRef(onScan);
@@ -356,11 +387,18 @@ function DeptSale() {
   }, []);
 
   function undoLast() {
+    // Decide what to undo now, at the tap, not when the queue gets to it.
+    const last = addedRef.current[0];
+    if (!last) return;
+    addedRef.current = addedRef.current.slice(1);
+    setAdded(addedRef.current);
+    const text =
+      last.kind === "product"
+        ? `Removed ${last.qty} × ${last.title}`
+        : `Removed ${last.qty} × $${formatCents(last.cents)} ${last.title}`;
+    showStatus("info", text);
     queue.current = queue.current.then(async () => {
-      const last = addedRef.current[0];
-      if (!last) return;
-      addedRef.current = addedRef.current.slice(1);
-      setAdded(addedRef.current);
+      if (last.failed) return; // never made it into the cart
       try {
         if (last.uuid) {
           // If POS merged repeats into one line (e.g. Party x3), only take off
@@ -398,13 +436,8 @@ function DeptSale() {
             setAdded(addedRef.current);
           }
         }
-        const text =
-          last.kind === "product"
-            ? `Removed ${last.qty} × ${last.title}`
-            : `Removed ${last.qty} × $${formatCents(last.cents)} ${last.title}`;
-        showStatus("info", text);
-        shopify.toast.show(text);
       } catch (err) {
+        showStatus("critical", `Couldn't remove ${last.title}`);
         shopify.toast.show(
           `Couldn't remove: ${err?.message ?? "already removed from cart?"}`,
         );
