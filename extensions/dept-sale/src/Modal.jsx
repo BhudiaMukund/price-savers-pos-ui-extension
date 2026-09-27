@@ -123,6 +123,10 @@ function DeptSale() {
   const queue = useRef(Promise.resolve());
   const addedRef = useRef([]); // same as `added`, readable immediately inside the queue
   const [status, setStatus] = useState(null); // {tone, text} shown as a coloured pill
+  // A problem staff must not miss (barcode not found, item not added). The scan
+  // beep is the same either way, so this stays up until dismissed or the next
+  // item goes in, instead of fading like the pill.
+  const [alert, setAlert] = useState(null);
   const onlineRef = useRef(online);
   onlineRef.current = online;
   const timers = useRef({});
@@ -134,6 +138,12 @@ function DeptSale() {
   function showStatus(tone, text) {
     setStatus({ tone, text });
     later("status", STATUS_MS, () => setStatus(null));
+    if (tone === "success") setAlert(null);
+  }
+  function showAlert(heading) {
+    clearTimeout(timers.current.status);
+    setStatus(null);
+    setAlert(heading);
   }
   useEffect(
     () => () => Object.values(timers.current).forEach(clearTimeout),
@@ -261,7 +271,7 @@ function DeptSale() {
         const landed = await landedInCart(dept.title, cents, before.qty, qty);
         if (!landed) {
           forget(entry);
-          showStatus("critical", `Not added: ${text}`);
+          showAlert(`Not added: ${text}. Key it again.`);
           shopify.toast.show(
             `Couldn't add ${text} (${err?.message ?? "unknown error"}). Please key it again.`,
           );
@@ -324,10 +334,7 @@ function DeptSale() {
     queue.current = queue.current.then(async () => {
       const found = await lookup.catch(() => null);
       if (!found) {
-        showStatus("critical", `Not found: ${code}`);
-        shopify.toast.show(
-          `No product with barcode ${code}. Key it in with a department.`,
-        );
+        showAlert(`Not found: ${code}. Type the price and tap a department.`);
         return;
       }
       const { cents, text } = describe(found);
@@ -335,7 +342,7 @@ function DeptSale() {
       try {
         uuid = await shopify.cart.addLineItem(found.variantId, qty);
       } catch (err) {
-        showStatus("critical", `Not added: ${found.title}`);
+        showAlert(`Not added: ${found.title}. Scan it again.`);
         shopify.toast.show(
           `Couldn't add ${found.title} (${err?.message ?? "unknown error"}).`,
         );
@@ -343,7 +350,7 @@ function DeptSale() {
       }
       if (!uuid) {
         // Staff dismissed POS's out-of-stock warning.
-        showStatus("caution", `Not added: ${found.title} (out of stock)`);
+        showAlert(`Not added: ${found.title} (out of stock).`);
         return;
       }
       remember({
@@ -614,6 +621,13 @@ function DeptSale() {
 
       <s-scroll-box>
         <s-stack direction="block" gap="base" padding={L.padding}>
+          {alert && (
+            <s-banner heading={alert} tone="critical">
+              <s-button slot="primary-action" onClick={() => setAlert(null)}>
+                OK
+              </s-button>
+            </s-banner>
+          )}
           {/* Display, like the till's screen */}
           <s-stack direction="block" gap="small-400">
             <s-stack
