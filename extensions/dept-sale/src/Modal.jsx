@@ -11,11 +11,11 @@ import {
   getStyle,
   keyImageUrl,
   numImageUrl,
-  previewImageUrl,
 } from "./departments.js";
 import { initialState, press, formatCents } from "./keypad.js";
 import { probeAll } from "./imageProbe.js";
 import { findByBarcode, cachedBarcode } from "./barcode.js";
+import { fetchStyleSetting, TEXT_ONLY } from "./settings.js";
 
 export default async () => {
   render(<DeptSale />, document.body);
@@ -49,7 +49,12 @@ const px = (n) => `${Math.round(n)}px`;
 // Visual feedback (POS extensions can't vibrate or play sounds).
 const STATUS_MS = 2500; // how long the green/red status pill stays before going back to plain text
 
+// The style is set store-wide in Shopify admin (Content → Metaobjects →
+// Dept Sale settings). Each till keeps a copy so it opens in the right style
+// straight away and offline.
 const STYLE_STORAGE_KEY = "keyStyle";
+const isKnownStyle = (id) =>
+  id === TEXT_ONLY || STYLES.some((s) => s.id === id);
 
 // POS can replay the last scan when a screen subscribes to the scanner.
 // A scan identical to that one arriving this soon after opening is ignored.
@@ -109,12 +114,17 @@ function DeptSale() {
     isOnline(shopify.connectivity?.current?.value),
   );
   const [style, setStyle] = useState(lastStyle ?? DEFAULT_STYLE);
-  const [showStyles, setShowStyles] = useState(false);
   // Keys whose picture couldn't be loaded in the current style; those show as text.
   const [failed, setFailed] = useState(lastFailed[style] ?? new Set());
   // Some styles (Product icons) are too detailed for a phone's tiny keys, so a
   // phone shows that style's `phoneStyle` instead. The choice itself is kept.
-  const activeStyle = isTablet ? style : (getStyle(style).phoneStyle ?? style);
+  const textOnly = style === TEXT_ONLY;
+  const activeStyle = textOnly
+    ? style
+    : isTablet
+      ? style
+      : (getStyle(style).phoneStyle ?? style);
+  const picturesAvailable = Boolean(KEY_IMAGES.baseUrl) && !textOnly;
   // The keypad state also lives in a ref so key handlers never go stale and the
   // key grids can be drawn once instead of on every tap (much faster in POS).
   const padRef = useRef(initialState);
@@ -178,13 +188,25 @@ function DeptSale() {
       .isTablet()
       .then((tablet) => setIsTablet(Boolean(tablet)))
       .catch(() => {});
-    // This till's saved style (works offline).
+    // The copy saved on this till first (instant, works offline), then the
+    // store-wide setting from admin in case it has changed.
+    const useStyle = (id) => {
+      lastStyle = id;
+      setStyle(id);
+    };
     Promise.resolve(shopify.storage?.get?.(STYLE_STORAGE_KEY))
+      .catch(() => null)
       .then((saved) => {
-        if (saved && STYLES.some((s) => s.id === saved)) {
-          lastStyle = saved;
-          setStyle(saved);
-        }
+        if (saved && isKnownStyle(saved)) useStyle(saved);
+        if (!isOnline(shopify.connectivity?.current?.value)) return null;
+        return fetchStyleSetting(globalThis.fetch).then((fromAdmin) => {
+          if (fromAdmin && fromAdmin !== saved) {
+            useStyle(fromAdmin);
+            Promise.resolve(
+              shopify.storage?.set?.(STYLE_STORAGE_KEY, fromAdmin),
+            ).catch(() => {});
+          }
+        });
       })
       .catch(() => {});
     return () => unsubs.forEach((u) => u && u());
@@ -193,7 +215,7 @@ function DeptSale() {
   // Check the pictures on open, when the style changes, and when the internet comes back.
   useEffect(() => {
     setFailed(lastFailed[activeStyle] ?? new Set());
-    if (!KEY_IMAGES.baseUrl || !online) return;
+    if (!picturesAvailable || !online) return;
     let cancelled = false;
     probeAll(ALL_CODES, imageFor(activeStyle))
       .then((bad) => {
@@ -204,22 +226,11 @@ function DeptSale() {
     return () => {
       cancelled = true;
     };
-  }, [online, activeStyle]);
-
-  function chooseStyle(id) {
-    lastStyle = id;
-    setStyle(id);
-    setShowStyles(false);
-    Promise.resolve(shopify.storage?.set?.(STYLE_STORAGE_KEY, id)).catch(
-      () => {},
-    );
-    shopify.toast.show(`Style: ${getStyle(id).name}`);
-  }
+  }, [online, activeStyle, picturesAvailable]);
 
   const L = isTablet ? LAYOUT.tablet : LAYOUT.phone;
   // Clear spans exactly three number keys plus the two gaps between them.
   const clearWidth = px(L.numKey * 3 + L.gapPx * 2);
-  const picturesAvailable = Boolean(KEY_IMAGES.baseUrl);
   // A key shows its picture only if pictures are set up, we're online, and
   // that key's image loaded in the last check. Otherwise it's a text button.
   const showPicture = (code) =>
@@ -533,61 +544,6 @@ function DeptSale() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isTablet, activeStyle, failed, online, picturesAvailable, handlers]);
 
-  // ---------------------------------------------------------------- Style screen
-
-  if (showStyles) {
-    const previewW = isTablet ? "600px" : "330px";
-    const previewH = isTablet ? "60px" : "33px";
-    return (
-      <s-page heading="Key style">
-        <s-button slot="secondary-actions" onClick={() => setShowStyles(false)}>
-          Done
-        </s-button>
-        <s-scroll-box>
-          <s-stack direction="block" gap="large" padding={L.padding}>
-            <s-text color="subdued">
-              Pick how the keys look on this till. Each till remembers its own
-              choice.
-            </s-text>
-            {!picturesAvailable && (
-              <s-text tone="caution">
-                Picture keys aren't set up yet (baseUrl is empty in
-                departments.js).
-              </s-text>
-            )}
-            {!online && picturesAvailable && (
-              <s-text tone="caution">
-                Offline: previews can't load, but you can still choose.
-              </s-text>
-            )}
-            {STYLES.map((s) => (
-              <s-clickable key={s.id} onClick={() => chooseStyle(s.id)}>
-                <s-stack direction="block" gap="small">
-                  <s-text type="strong">
-                    {s.id === style ? `✓ ${s.name}` : s.name}
-                    {!isTablet && s.phoneStyle
-                      ? ` (tablet only; phones show ${getStyle(s.phoneStyle).name})`
-                      : ""}
-                  </s-text>
-                  {picturesAvailable && online && (
-                    <s-box inlineSize={previewW} blockSize={previewH}>
-                      <s-image
-                        src={previewImageUrl(s.id)}
-                        alt={s.name}
-                        objectFit="contain"
-                        inlineSize="fill"
-                      />
-                    </s-box>
-                  )}
-                </s-stack>
-              </s-clickable>
-            ))}
-          </s-stack>
-        </s-scroll-box>
-      </s-page>
-    );
-  }
-
   // ---------------------------------------------------------------- Sale screen
 
   const priceShown = `$${formatCents(pad.entry === "" ? 0 : parseInt(pad.entry, 10))}`;
@@ -636,15 +592,7 @@ function DeptSale() {
               alignItems="center"
             >
               {priceDisplay}
-              <s-stack direction="inline" gap="base" alignItems="center">
-                <s-text color="subdued">Cart {cartTotal}</s-text>
-                <s-button
-                  variant="secondary"
-                  onClick={() => setShowStyles(true)}
-                >
-                  ⚙
-                </s-button>
-              </s-stack>
+              <s-text color="subdued">Cart {cartTotal}</s-text>
             </s-stack>
             {status ? (
               <s-badge tone={status.tone}>{status.text}</s-badge>

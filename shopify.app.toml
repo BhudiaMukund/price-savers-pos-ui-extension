@@ -19,6 +19,19 @@ embedded_app_direct_api_access = true
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
 scopes = "read_products"
 
+   [metaobjects.app.dept_sale_settings]
+   name = "Dept Sale settings"
+   description = "Settings for the Dept Sale keypad on Shopify POS. Only the first entry is used."
+   display_name_field = "key_style"
+   access.admin = "merchant_read_write"
+
+   [metaobjects.app.dept_sale_settings.fields.key_style]
+   name = "Key style"
+   description = "How the department keys look on every till. Product icons shows Soft pastel on phones."
+   type = "single_line_text_field"
+   required = true
+   validations.choices = ["Classic Casio", "Soft pastel", "Dark with colour bar", "Bold colour", "Product icons", "Text keys only"]
+
 [auth]
 redirect_urls = [ "https://shopify.dev/apps/default-app-home/api/auth" ]
 

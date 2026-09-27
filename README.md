@@ -52,7 +52,8 @@ instant.
   number pad beside them on a tablet or above them on a phone.
 - **Five key styles.** Classic Casio, Soft pastel, Dark with colour bar, Bold
   colour, and Product icons (tablets only; phones fall back to Soft pastel).
-  Pick one from the ⚙ button. Each till remembers its own choice.
+  The owner picks one in Shopify admin and every till follows it. There's
+  also a *Text keys only* setting that turns the pictures off.
 
   <p align="center">
     <img src="docs/styles.png" alt="The five key styles side by side" width="760">
@@ -65,8 +66,9 @@ instant.
 - **Scanning keeps working.** POS doesn't add scanned items to the cart while an
   extension screen is open, so Dept Sale catches the scan itself, finds the
   product (first on the till, then from Shopify if the till doesn't have it)
-  and adds it. Unknown barcodes show *Not found* so staff can key the item in
-  with a department instead.
+  and adds it. An unknown barcode puts a red *Not found* banner at the top
+  that stays until staff tap OK or ring up the next item, so they can key it
+  in with a department instead.
 - **Department tagging.** Each line gets a hidden `_ps_dept` property (for
   example `PARTY`). Customers and receipts don't show it, but it's on the order
   in admin and in exports, which is enough to build department totals.
@@ -78,12 +80,26 @@ instant.
 You'll need Node 20+, the [Shopify CLI](https://shopify.dev/docs/api/shopify-cli)
 (3.92 or later) and a Shopify account that can create apps for your store.
 
-Scanning while Dept Sale is open needs read-only product access. In
-`shopify.app.toml`:
+Add these to `shopify.app.toml` in the project root. The scope lets
+scanning look up products; the metaobject is the style setting in admin (it
+belongs to the app, so it needs no extra scope).
 
 ```toml
 [access_scopes]
 scopes = "read_products"
+
+[metaobjects.app.dept_sale_settings]
+name = "Dept Sale settings"
+description = "Settings for the Dept Sale keypad on Shopify POS. Only the first entry is used."
+display_name_field = "key_style"
+access.admin = "merchant_read_write"
+
+[metaobjects.app.dept_sale_settings.fields.key_style]
+name = "Key style"
+description = "How the department keys look on every till. Product icons shows Soft pastel on phones."
+type = "single_line_text_field"
+required = true
+validations.choices = ["Classic Casio", "Soft pastel", "Dark with colour bar", "Bold colour", "Product icons", "Text keys only"]
 ```
 
 ```bash
@@ -117,6 +133,14 @@ time POS reloads.
 
 If staff can't see the tile, give their POS role access to apps under
 **Settings → Users and permissions → POS roles**.
+
+## Changing the key style
+
+In Shopify admin, go to **Content → Metaobjects → Dept Sale settings**. The
+first time, click **Add entry**, pick a **Key style** and save. After that,
+open the entry to change it. Tills switch the next time Dept Sale is opened
+while online, and keep that style when offline. With no entry, tills use
+`DEFAULT_STYLE` from `departments.js`.
 
 ## Picture keys
 
@@ -163,7 +187,9 @@ Everything a shop would want to change is in
   GST-free department.
 - `MAX_PRICE_CENTS` and `MAX_QTY` set the guard rails.
 - `LAYOUT` sets the key sizes for tablets and phones.
-- `STYLES` and `DEFAULT_STYLE` set the key styles.
+- `STYLES` sets the key styles and `DEFAULT_STYLE` the one used before a
+  style is set in admin. If you rename a style, update the `choices` list in
+  `shopify.app.toml` to match.
 
 If you add or rename a department and use picture keys, add it to `DEPTS` in
 `tools/make_keys.py` too and regenerate the images.
@@ -180,6 +206,7 @@ extensions/dept-sale/
     keypad.js           keypad logic (no Shopify calls)
     imageProbe.js       checks which picture keys load
     barcode.js          finds the product for a scanned barcode
+    settings.js         reads the key style set in admin
     *.test.js           tests
 tools/
   make_keys.py          generates key-images/ (python3 tools/make_keys.py [style])
@@ -193,11 +220,11 @@ key-images/             generated PNGs to upload to Shopify Files
 
 ## Tests
 
-The keypad logic, picture check and barcode lookup are plain JavaScript, so they run under
+The keypad logic, picture check, barcode lookup and settings are plain JavaScript, so they run under
 Node without POS:
 
 ```bash
-node --test extensions/dept-sale/src/keypad.test.js extensions/dept-sale/src/imageProbe.test.js extensions/dept-sale/src/barcode.test.js
+node --test extensions/dept-sale/src/*.test.js
 ```
 
 ## Known limits
@@ -206,7 +233,9 @@ These come from what POS extensions are allowed to do, not from choices in
 this code.
 
 - **No haptics or sound.** POS extensions can't vibrate the device or play a
-  sound. Feedback is visual only.
+  sound. The beep on a scan only means the barcode was read, not that the
+  product was found, so staff should glance at the screen: green pill means
+  added, red banner means it wasn't.
 - **Small price text.** POS doesn't let extensions set text size, so the price
   display uses the largest heading POS offers.
 - **Scanned items are looked up by Dept Sale.** The till's own product search
