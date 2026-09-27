@@ -237,7 +237,7 @@ export const LAYOUT = {
 // keep showing the old cached ones.
 export const KEY_IMAGES = {
   baseUrl:
-    "https://cdn.shopify.com/s/files/1/0705/9547/7672/files/",
+    "ENTER YOUR BASE URL HERE",
   version: "2",
 };
 
